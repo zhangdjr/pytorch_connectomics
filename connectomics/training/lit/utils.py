@@ -131,6 +131,11 @@ def parse_args():
         help="Number of Optuna trials (overrides config, use with --mode tune or tune-test)",
     )
     parser.add_argument(
+        "--freeze-encoder",
+        action="store_true",
+        help="Freeze encoder layers (stem, enc_block_*, bottleneck) for fine-tuning",
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
         help="Config overrides in key=value format (e.g., data.batch_size=8)",

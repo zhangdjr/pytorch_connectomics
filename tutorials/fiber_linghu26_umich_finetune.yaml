@@ -1,9 +1,9 @@
 _base_: bases/mednext.yaml
 experiment_name: fiber_mednext_bcs
-description: Fiber segmentation with MedNeXt and multi-task learning (Binary + Contour + SDT)
+description: Fine-tune fiber_linghu26 on UMich data (train on CA1-3_2, test on CA1-4_2)
 system:
   training:
-    num_gpus: 4
+    num_gpus: 1
     num_cpus: 8
     num_workers: 8
     batch_size: 4
@@ -64,11 +64,10 @@ model:
     - skeleton_aware_edt
     - - 4
 data:
-  train_path: /projects/weilab/dataset/barcode/2026/PT37_round2/
   train_image:
-  - "*raw.tif"
+  - /projects/weilab/dataset/barcode/2026/umich/0112-5-CA1-3_2.tif
   train_label:
-  - "*-mask.tif"
+  - /projects/weilab/dataset/barcode/2026/umich/seg 0112-5-CA1-3_2 [ready to use].tif
   train_resolution:
   - 40
   - 16
@@ -149,19 +148,19 @@ data:
       - 0.7
       - 1.4
 optimization:
-  max_epochs: 800
+  max_epochs: 5
   accumulate_grad_batches: 1
   precision: 16-mixed
   optimizer:
-    lr: 0.001
+    lr: 0.000001
     weight_decay: 0.01
     eps: 1.0e-08
   scheduler:
     name: CosineAnnealingWarmRestarts
-    warmup_epochs: 5
-    warmup_start_lr: 1.0e-05
-    min_lr: 1.0e-05
-    T_0: 200
+    warmup_epochs: 1
+    warmup_start_lr: 1.0e-08
+    min_lr: 1.0e-08
+    T_0: 5
     T_mult: 1
 monitor:
   logging:
@@ -179,17 +178,15 @@ monitor:
     save_every_n_epochs: 5
   early_stopping:
     monitor: train_loss_total_epoch
-    patience: 210
+    patience: 5
     min_delta: 1.0e-05
     threshold: 0.01
     divergence_threshold: 100.0
 test:
   data:
     test_image:
-    - /projects/weilab/dataset/barcode/2026/umich/0112-5-CA1-3_2.tif
     - /projects/weilab/dataset/barcode/2026/umich/0112-5-CA1-4_2.tif
     test_label:
-    - /projects/weilab/dataset/barcode/2026/umich/seg 0112-5-CA1-3_2 [ready to use].tif
     - /projects/weilab/dataset/barcode/2026/umich/seg 0112-5-CA1-4_2 [ready to use].tif
     test_resolution:
     - 40
@@ -247,7 +244,7 @@ tune:
   enabled: true
   n_trials: 100
   timeout: null
-  study_name: fiber_linghu26_decoding_optimization
+  study_name: fiber_linghu26_umich_finetune_decoding_optimization
   storage: null
   load_if_exists: true
 
@@ -269,27 +266,9 @@ tune:
 
   data:
     tune_image:
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/1-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/2-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/3-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_1-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_2-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_3-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/5_1-xri-raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/5_2-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/6_1-xri_raw.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/6_2-xri-raw.tif
+    - /projects/weilab/dataset/barcode/2026/umich/0112-5-CA1-3_2.tif
     tune_label:
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/1-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/2-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/3-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_1-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_2-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/4_3-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/5_1-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/5_2-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/6_1-mask.tif
-    - /projects/weilab/dataset/barcode/2026/PT37_round2/6_2-mask.tif
+    - /projects/weilab/dataset/barcode/2026/umich/seg 0112-5-CA1-3_2 [ready to use].tif
     tune_resolution:
     - 40
     - 16
