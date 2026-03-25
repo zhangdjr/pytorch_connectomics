@@ -201,7 +201,7 @@ def create_datamodule(
     # Build transforms
     train_transforms = build_train_transforms(cfg)
     val_transforms = build_val_transforms(cfg)
-    test_transforms = build_test_transforms(cfg) if mode in ["test", "tune"] else val_transforms
+    test_transforms = build_test_transforms(cfg, mode=mode) if mode in ["test", "tune"] else val_transforms
 
     print(f"  Train transforms: {len(train_transforms.transforms)} steps")
     print(f"  Val transforms: {len(val_transforms.transforms)} steps")

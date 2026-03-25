@@ -243,6 +243,21 @@ def main():
     print(f"Creating model: {cfg.model.architecture}")
     model = ConnectomicsModule(cfg)
 
+    # Freeze encoder layers if requested (for fine-tuning)
+    if getattr(args, 'freeze_encoder', False):
+        frozen_count = 0
+        encoder_prefixes = ('model.model.stem', 'model.model.enc_block', 'model.model.bottleneck',
+                           'model.model.down_', 'model.stem', 'model.enc_block', 'model.bottleneck',
+                           'model.down_')
+        for name, param in model.named_parameters():
+            if any(name.startswith(prefix) for prefix in encoder_prefixes):
+                param.requires_grad = False
+                frozen_count += 1
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        print(f"  🧊 Encoder frozen: {frozen_count} parameter tensors frozen")
+        print(f"  Trainable: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
+
     # Count parameters
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Model parameters: {num_params:,}")

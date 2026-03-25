@@ -154,3 +154,23 @@ lib/
 
 # Development logs and documentation
 tmp/
+
+# SLURM logs
+logs/
+
+# Generated analysis outputs
+fiber_analysis/
+results_87slice/
+qc_gallery/
+
+# Large data files
+*.tiff
+*.tif
+*.ckpt
+*.pth.tar
+
+# AI agent configs
+AGENT.md
+CLAUDE.md
+.claude/
+.codex/

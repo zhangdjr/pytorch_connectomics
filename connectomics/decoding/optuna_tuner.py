@@ -1019,6 +1019,19 @@ def load_and_apply_best_params(cfg):
             decoder_idx = len(cfg.test.decoding)
             cfg.test.decoding.append({"name": decoding_function, "kwargs": {}})
 
+    # If test.decoding is empty, populate it from inference.decoding or create a new entry
+    if len(cfg.test.decoding) == 0:
+        if hasattr(cfg, "inference") and hasattr(cfg.inference, "decoding") and cfg.inference.decoding:
+            # Copy from inference.decoding
+            import copy
+            cfg.test.decoding = copy.deepcopy(cfg.inference.decoding)
+            print(f"  Copied {len(cfg.test.decoding)} decoder(s) from inference.decoding to test.decoding")
+        else:
+            # Create a new decoder entry with the tuned function name
+            func_name = decoding_function or cfg.tune.parameter_space.decoding.function_name
+            cfg.test.decoding.append({"name": func_name, "kwargs": {}})
+            print(f"  Created new decoder entry: {func_name}")
+
     # Update parameters
     if decoder_idx < len(cfg.test.decoding):
         decoder = cfg.test.decoding[decoder_idx]
@@ -1036,5 +1049,36 @@ def load_and_apply_best_params(cfg):
                 decoder.kwargs[key] = value
 
         print(f"✓ Applied best parameters to test.decoding[{decoder_idx}]")
+
+    # Also apply to inference.decoding as fallback (apply_decode_mode checks both)
+    if hasattr(cfg, "inference") and hasattr(cfg.inference, "decoding") and cfg.inference.decoding:
+        for idx, decoder in enumerate(cfg.inference.decoding):
+            inf_name = decoder.get("name") if isinstance(decoder, dict) else getattr(decoder, "name", None)
+            target_name = decoding_function or (cfg.tune.parameter_space.decoding.function_name if cfg.tune else None)
+            if inf_name == target_name or target_name is None:
+                if isinstance(decoder, dict):
+                    if "kwargs" not in decoder:
+                        decoder["kwargs"] = {}
+                    decoder["kwargs"].update(OmegaConf.to_container(best_params["decoding_params"]))
+                else:
+                    if not hasattr(decoder, "kwargs") or decoder.kwargs is None:
+                        decoder.kwargs = {}
+                    for key, value in best_params["decoding_params"].items():
+                        decoder.kwargs[key] = value
+                print(f"✓ Applied best parameters to inference.decoding[{idx}]")
+                break
+
+    # Apply postprocessing params if present
+    if "postprocessing_params" in best_params and best_params["postprocessing_params"]:
+        postproc = OmegaConf.to_container(best_params["postprocessing_params"])
+        if hasattr(cfg, "inference"):
+            if not hasattr(cfg.inference, "postprocessing") or cfg.inference.postprocessing is None:
+                cfg.inference.postprocessing = {}
+            if isinstance(cfg.inference.postprocessing, dict):
+                cfg.inference.postprocessing.update(postproc)
+            else:
+                for key, value in postproc.items():
+                    setattr(cfg.inference.postprocessing, key, value)
+            print(f"✓ Applied postprocessing parameters: {postproc}")
 
     return cfg

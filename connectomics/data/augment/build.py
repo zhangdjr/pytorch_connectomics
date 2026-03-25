@@ -418,27 +418,29 @@ def _build_eval_transforms_impl(cfg: Config, mode: str = "val", keys: list[str] 
                 )
 
     patch_size = tuple(cfg.data.patch_size) if hasattr(cfg.data, "patch_size") else None
-    if patch_size and all(size > 0 for size in patch_size):
-        transforms.append(
-            SpatialPadd(
-                keys=keys,
-                spatial_size=patch_size,
-                constant_values=0.0,
-            )
-        )
 
-    # Add spatial cropping - MODE-SPECIFIC
-    # Validation: Apply center crop for patch-based validation
-    # Test: Skip cropping to enable sliding window inference on full volumes
+    # Add spatial padding and cropping - MODE-SPECIFIC
+    # Validation: Pad to patch_size then center crop (ensures exact patch dimensions)
+    # Test: Skip padding entirely — SlidingWindowInferer handles its own padding
+    #       and crops the output back to the original input size. Padding here would
+    #       inflate the volume (e.g., 56 Z-slices → 128) without any subsequent crop,
+    #       causing the saved predictions to have wrong dimensions.
     if mode == "val":
         if patch_size and all(size > 0 for size in patch_size):
+            transforms.append(
+                SpatialPadd(
+                    keys=keys,
+                    spatial_size=patch_size,
+                    constant_values=0.0,
+                )
+            )
             transforms.append(
                 CenterSpatialCropd(
                     keys=keys,
                     roi_size=patch_size,
                 )
             )
-    # else: mode == "test" -> no cropping for sliding window inference
+    # else: mode == "test" -> no padding or cropping for sliding window inference
 
     # Normalization - use smart normalization
     # For test/tune mode, only use test.data.image_transform or
@@ -528,7 +530,7 @@ def build_val_transforms(cfg: Config, keys: list[str] = None, skip_loading: bool
     return _build_eval_transforms_impl(cfg, mode="val", keys=keys, skip_loading=skip_loading)
 
 
-def build_test_transforms(cfg: Config, keys: list[str] = None) -> Compose:
+def build_test_transforms(cfg: Config, keys: list[str] = None, mode: str = "test") -> Compose:
     """
     Build test/inference transforms from Hydra config.
 
@@ -538,11 +540,13 @@ def build_test_transforms(cfg: Config, keys: list[str] = None) -> Compose:
     Args:
         cfg: Hydra Config object
         keys: Keys to transform (default: auto-detected as ['image'] only)
+        mode: 'test' or 'tune' — controls which config section is used
+              for normalization and other data-specific settings
 
     Returns:
         Composed MONAI transforms (no augmentation, no cropping)
     """
-    return _build_eval_transforms_impl(cfg, mode="test", keys=keys)
+    return _build_eval_transforms_impl(cfg, mode=mode, keys=keys)
 
 
 def build_inference_transforms(cfg: Config) -> Compose:
