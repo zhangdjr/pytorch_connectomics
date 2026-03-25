@@ -64,12 +64,17 @@ Two conda environments are needed:
 - **`microsam`** — separate env for micro-sam cell segmentation (can't coexist with pytc's GPU PyTorch)
 
 ```bash
-# microsam env setup (one-time)
-conda create -n microsam python=3.11
-conda activate microsam
-conda install -c conda-forge micro_sam
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# pytc env (main)
+conda env create -f environment.yml
+conda activate pytc
+pip install -e .
+
+# microsam env (cell segmentation only)
+conda env create -f environment_microsam.yml
 ```
+
+> **Why two envs?** micro-sam's conda-forge dependencies replace GPU PyTorch with CPU-only.
+> The SLURM scripts handle env activation automatically (`cell_seg_microsam.sl` → microsam, `fiber_pipeline_*.sl` → pytc).
 
 ### Step 1: Extract tiles from ND2
 ```bash
@@ -214,7 +219,8 @@ Reduce `inference.sliding_window.window_size` in your config (e.g., `[32, 128, 1
 ├── neuroglancer_all_nd2_tiles.py  # Multi-tile 3D viewer
 ├── neuroglancer_all_volumes.py    # Single-volume 3D viewer
 ├── generate_fiber_coordinates.py  # Legacy: segmentation masks → coordinate CSV
-└── environment.yml                # Conda environment spec (pytc env)
+├── environment.yml                # Conda environment spec (pytc env)
+└── environment_microsam.yml       # Conda environment spec (microsam env)
 ```
 
 ### Key configs
