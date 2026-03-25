@@ -16,8 +16,9 @@ echo "Node: $SLURM_NODELIST"
 echo "Start time: $(date)"
 echo ""
 
-# Activate microsam env
-source activate microsam
+# Activate microsam env (separate from pytc — micro-sam requires conda-forge packages)
+source ~/.bashrc
+conda activate microsam
 
 # Run on all 13 tiles (skips any that are already cached)
 python cell_seg_microsam.py --tile all --model_type vit_b_lm
