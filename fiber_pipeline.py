@@ -503,6 +503,8 @@ def run_normalization(skeletons, config):
         if result is not None:
             results[fid] = result
             results[fid]["length_nm"] = skeletons[fid]["length_nm"]
+            # Keep original centerline for correct spatial coordinates in CSV
+            results[fid]["centerline_original"] = skeletons[fid]["centerline"]
         else:
             failed += 1
 
@@ -619,7 +621,8 @@ def export_csv(validated, nd2_name, tile_name, output_dir, config):
 
     rows = []
     for fid, data in validated.items():
-        centerline = data["centerline"]
+        # Use original centerline for correct spatial coordinates
+        centerline = data.get("centerline_original", data["centerline"])
         signals = data["signals"]
 
         # Centroid (midpoint of skeleton) in µm
