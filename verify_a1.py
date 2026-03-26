@@ -149,6 +149,30 @@ for fid, cl in zip(fiber_ids, centerlines):
 print(f"  Valid skeleton voxels: {np.count_nonzero(valid_skel_vol)}")
 print(f"  Invalid skeleton voxels: {np.count_nonzero(invalid_skel_vol)}")
 
+# --- Rasterize CSV centroid markers (3x3x1 cross-hairs) ---
+centroid_vol = np.zeros(vol_shape, dtype=np.uint32)
+if csv_path.exists():
+    print("Rasterizing CSV centroid markers...")
+    n_marked = 0
+    for row in csv_rows:
+        fid = int(row["fiber_id"])
+        # CSV centroids are in µm — convert to voxel
+        cz = float(row["centroid_z_um"]) * 1000.0 / ANISO_NM[0]
+        cy = float(row["centroid_y_um"]) * 1000.0 / ANISO_NM[1]
+        cx = float(row["centroid_x_um"]) * 1000.0 / ANISO_NM[2]
+        zi = int(round(cz))
+        yi = int(round(cy))
+        xi = int(round(cx))
+        if 0 <= zi < vol_shape[0] and 0 <= yi < vol_shape[1] and 0 <= xi < vol_shape[2]:
+            # Paint a small 3x3 cross so it's visible
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    yy = min(max(yi + dy, 0), vol_shape[1] - 1)
+                    xx = min(max(xi + dx, 0), vol_shape[2] - 1)
+                    centroid_vol[zi, yy, xx] = fid
+            n_marked += 1
+    print(f"  Centroid markers: {n_marked} fibers")
+
 # ============================================================================
 # Add layers
 # ============================================================================
@@ -189,6 +213,14 @@ with viewer.txn() as s:
         ),
     )
 
+    # --- CSV centroid markers (for coordinate verification) ---
+    if np.count_nonzero(centroid_vol) > 0:
+        s.layers["csv_centroids"] = neuroglancer.SegmentationLayer(
+            source=neuroglancer.LocalVolume(
+                data=centroid_vol, dimensions=dims
+            ),
+        )
+
     # Initial view: center of volume, mid-Z
     s.position = [
         vol_shape[0] // 2,
@@ -224,6 +256,7 @@ print("  fiber_seg        — fiber instance segmentation")
 print("  cell_seg         — micro-sam cell body segmentation (3D-consistent)")
 print("  valid_skeletons  — rasterized skeleton voxels (valid fibers)")
 print("  invalid_skeletons— rasterized skeleton voxels (invalid fibers)")
+print("  csv_centroids    — CSV centroid markers (skeleton midpoints, 3x3 crosses)")
 print()
 print("  Skeleton labels match fiber_seg labels — hover to see fiber ID.")
 print()
@@ -253,6 +286,12 @@ print("""
 5. CHANNEL SIGNALS
    - Toggle 'timestamp' (purple) — should look symmetric along fibers
    - Toggle 'cfos' (orange) — signal varies along fibers
+
+6. COORDINATE VERIFICATION
+   - Toggle 'fiber_seg' + 'csv_centroids' on, others off
+   - Each cross-hair should land INSIDE its matching fiber
+   - Hover csv_centroids for fiber_id, check it matches fiber_seg label
+   - Centroids are skeleton midpoints (arc-length halfway), not volume centroids
 
 Press Ctrl+C to exit when done.
 """)

@@ -121,7 +121,7 @@ python -i verify_a1.py   # or verify_a2.py
 | `parent_cell_id` | Cell label at soma (from micro-sam cell seg) |
 | `fiber_length_um` | Skeleton arc length in µm |
 | `pca_linearity` | PCA ratio (1.0 = perfectly linear) |
-| `centroid_{z,y,x}_um` | Skeleton midpoint in µm |
+| `centroid_{z,y,x}_um` | Skeleton midpoint in µm (arc-length halfway point along the spline-fitted centerline, NOT the volumetric centroid) |
 | `{dapi,fiber,cfos,timestamp}_{mean,median,min,max,std}` | Per-channel signal stats along skeleton |
 | `mean_soma_dapi` | Mean DAPI brightness at soma |
 
