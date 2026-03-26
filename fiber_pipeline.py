@@ -674,6 +674,54 @@ def export_csv(validated, nd2_name, tile_name, output_dir, config):
     return csv_path
 
 
+def export_profiles(validated, nd2_name, tile_name, output_dir, config):
+    """Export full 1000-point intensity profiles as NPZ.
+
+    Saves one NPZ per tile with arrays:
+      fiber_ids:  (N,)      — fiber instance IDs
+      is_valid:   (N,)      — boolean validity flags
+      dapi:       (N, 1000) — DAPI intensity along each fiber
+      fiber:      (N, 1000) — fiber channel intensity
+      cfos:       (N, 1000) — cfos intensity
+      timestamp:  (N, 1000) — timestamp intensity
+    """
+    print(f"\n{'='*60}")
+    print("STEP: Intensity Profile Export")
+    print(f"{'='*60}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    npz_path = os.path.join(output_dir, f"{nd2_name}_{tile_name}_profiles.npz")
+
+    ch_names = config["channel_names"]
+
+    # Collect arrays sorted by fiber_id
+    fids_sorted = sorted(validated.keys())
+    fiber_ids = np.array(fids_sorted, dtype=np.int32)
+    is_valid = np.array([validated[fid]["is_valid"] for fid in fids_sorted], dtype=bool)
+
+    profiles = {}
+    for ch_idx, ch_name in ch_names.items():
+        ch_profiles = []
+        for fid in fids_sorted:
+            sig = validated[fid]["signals"].get(ch_name)
+            if sig is not None:
+                ch_profiles.append(sig)
+            else:
+                ch_profiles.append(np.zeros(config["skeleton"]["num_centerline_points"]))
+        profiles[ch_name] = np.array(ch_profiles, dtype=np.float32)
+
+    np.savez_compressed(npz_path,
+        fiber_ids=fiber_ids,
+        is_valid=is_valid,
+        **profiles,
+    )
+
+    print(f"  Saved {len(fiber_ids)} fiber profiles ({profiles[list(ch_names.values())[0]].shape[1]} points each)")
+    print(f"  Channels: {list(ch_names.values())}")
+    print(f"  → {npz_path}")
+    return npz_path
+
+
 # ============================================================================
 # Main Pipeline
 # ============================================================================
@@ -792,6 +840,7 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
     csv_path = None
     if "csv" in steps:
         csv_path = export_csv(validated, nd2_name, tile_name, output_dir, config)
+        export_profiles(validated, nd2_name, tile_name, output_dir, config)
 
     print(f"\n{'#'*60}")
     print(f"# PIPELINE COMPLETE: {nd2_name} / {tile_name}")

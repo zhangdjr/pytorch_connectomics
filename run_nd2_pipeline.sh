@@ -314,6 +314,36 @@ fi
 
 echo ""
 
+# Combine per-tile intensity profile NPZs into one combined NPZ
+echo "Combining intensity profile NPZs..."
+python -u -c "
+import numpy as np, glob, sys
+files = sorted(glob.glob('${OUTPUT_DIR}/${ND2_BASENAME}_*_profiles.npz'))
+if not files:
+    print('  WARNING: No per-tile profile NPZs found'); sys.exit(0)
+all_fids, all_valid, all_tiles = [], [], []
+ch_profiles = {}
+for f in files:
+    d = np.load(f)
+    tile = f.rsplit('_profiles.npz', 1)[0].rsplit('_', 1)[-1]
+    n = len(d['fiber_ids'])
+    all_fids.append(d['fiber_ids'])
+    all_valid.append(d['is_valid'])
+    all_tiles.extend([tile] * n)
+    for k in d.files:
+        if k not in ('fiber_ids', 'is_valid'):
+            ch_profiles.setdefault(k, []).append(d[k])
+out = '${OUTPUT_DIR}/${ND2_BASENAME}_combined_profiles.npz'
+np.savez_compressed(out,
+    fiber_ids=np.concatenate(all_fids),
+    is_valid=np.concatenate(all_valid),
+    tile_names=np.array(all_tiles),
+    **{k: np.concatenate(v) for k, v in ch_profiles.items()})
+print(f'  Combined profiles: {out} ({sum(len(f) for f in all_fids)} fibers from {len(files)} tiles)')
+"
+
+echo ""
+
 # ============================================================================
 # Summary
 # ============================================================================
@@ -325,5 +355,6 @@ echo "ND2 name:     ${ND2_BASENAME}"
 echo "Tiles:        ${N_TILES} (${TILE_NAMES[*]})"
 echo "Output dir:   ${OUTPUT_DIR}"
 echo "Combined CSV: ${COMBINED_CSV}"
+echo "Profiles:     ${OUTPUT_DIR}/${ND2_BASENAME}_combined_profiles.npz"
 echo "End time:     $(date)"
 echo "============================================================"

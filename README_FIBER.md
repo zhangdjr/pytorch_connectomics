@@ -23,7 +23,7 @@ Given an ND2 microscopy file, the pipeline automatically:
 ### 1. Log in to the BC cluster
 
 ```bash
-ssh your_username@login.bc.edu
+ssh your_username@a002.bc.edu
 ```
 
 ### 2. Go to the project folder
@@ -69,13 +69,14 @@ Results are saved to `fiber_results/{nd2_name}/`:
 
 ```
 fiber_results/
-└── 1-A1-2005/                           # one folder per ND2 file
-    ├── 1-A1-2005_combined.csv           # <-- THE MAIN OUTPUT (all tiles combined)
-    ├── 1-A1-2005_A1.csv                 # per-tile CSV (tile A1)
-    ├── 1-A1-2005_B5.csv                 # per-tile CSV (tile B5)
-    ├── tiles/                           # extracted channel images
-    ├── fiber_seg/                       # fiber segmentation masks
-    └── cache/                           # intermediate files (cell seg, skeletons)
+└── 1-A1-2005/                                # one folder per ND2 file
+    ├── 1-A1-2005_combined.csv                # <-- SUMMARY CSV (all tiles combined)
+    ├── 1-A1-2005_combined_profiles.npz       # <-- FULL INTENSITY PROFILES (all tiles)
+    ├── 1-A1-2005_A1.csv                      # per-tile CSV
+    ├── 1-A1-2005_A1_profiles.npz             # per-tile profiles
+    ├── tiles/                                # extracted channel images
+    ├── fiber_seg/                            # fiber segmentation masks
+    └── cache/                                # intermediate files (cell seg, skeletons)
 ```
 
 **The file you want is `{nd2_name}_combined.csv`** — open it in Excel, Google Sheets, or Python/R.
@@ -101,6 +102,50 @@ Each row is one detected fiber. Key columns:
 Each channel also has `_median`, `_min`, `_max`, and `_std` columns (e.g., `cfos_median`, `cfos_max`).
 
 > **Tip:** Filter by `is_valid == True` to get only high-quality fiber measurements.
+
+### Full Intensity Profiles
+
+In addition to the summary CSV, the pipeline saves **full 1000-point intensity profiles** for every fiber. These are the raw signal values sampled along the fiber's skeleton from one end to the other.
+
+The profiles are saved as `.npz` files (a compressed NumPy format):
+
+```
+fiber_results/1-A1-2005/
+├── 1-A1-2005_combined_profiles.npz    # <-- all tiles combined
+├── 1-A1-2005_A1_profiles.npz          # per-tile profiles
+└── 1-A1-2005_B5_profiles.npz
+```
+
+**How to load profiles in Python:**
+```python
+import numpy as np
+
+data = np.load("fiber_results/1-A1-2005/1-A1-2005_combined_profiles.npz")
+
+# What's inside:
+data["fiber_ids"]   # (N,) array of fiber IDs
+data["is_valid"]    # (N,) boolean — True for valid fibers
+data["tile_names"]  # (N,) array of tile names (e.g., "A1", "B5")
+data["dapi"]        # (N, 1000) — DAPI intensity profile for each fiber
+data["fiber"]       # (N, 1000) — fiber channel intensity
+data["cfos"]        # (N, 1000) — cfos intensity
+data["timestamp"]   # (N, 1000) — timestamp intensity
+
+# Example: plot cfos profile for fiber #42
+import matplotlib.pyplot as plt
+idx = np.where(data["fiber_ids"] == 42)[0][0]
+plt.plot(data["cfos"][idx])
+plt.xlabel("Position along fiber (0 = one end, 999 = other end)")
+plt.ylabel("cfos intensity")
+plt.title(f"Fiber {42} cfos profile")
+plt.show()
+
+# Example: get all valid cfos profiles
+valid = data["is_valid"]
+cfos_valid = data["cfos"][valid]  # shape (N_valid, 1000)
+```
+
+Each profile has 1000 evenly-spaced points along the fiber's skeleton. Point 0 is one end of the fiber, point 999 is the other end.
 
 ---
 
