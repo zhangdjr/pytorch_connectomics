@@ -749,6 +749,18 @@ class ConnectomicsModule(pl.LightningModule):
             # Keep in training mode (e.g., for Monte Carlo Dropout uncertainty estimation)
             self.train()
 
+        # Apply EmptyPatchSkipWrapper AFTER checkpoint loading (set by scripts/main.py)
+        if getattr(self, '_apply_empty_skip', False):
+            from connectomics.inference import EmptyPatchSkipWrapper
+            out_ch = getattr(self.cfg.model, 'out_channels', 3)
+            threshold = getattr(self, '_empty_threshold', 0.02)
+            # Wrap the inner network inside MedNeXtWrapper so key structure is preserved
+            self.model.model = EmptyPatchSkipWrapper(
+                self.model.model, out_channels=out_ch, empty_threshold=threshold
+            )
+            print(f"  EmptyPatchSkipWrapper enabled  "
+                  f"(out_channels={out_ch}, threshold={threshold})")
+
     def on_test_end(self):
         """Called at the end of testing."""
         # Note: Metrics are logged in test_step with on_epoch=True,

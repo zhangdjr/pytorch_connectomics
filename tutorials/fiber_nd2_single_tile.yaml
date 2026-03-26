@@ -1,0 +1,133 @@
+_base_: bases/mednext.yaml
+experiment_name: fiber_nd2_tile
+description: >
+  Optimized single-tile inference config.
+  Used by step2_infer_tiles_array.sl — tile path is injected at runtime.
+  Optimizations vs fiber_nd2_all_tiles.yaml:
+    - sw_batch_size: 2 → 8  (better GPU utilization on L40S)
+    - torch float32 matmul precision: high  (Tensor Core enabled)
+    - skip_empty_patches enabled via CLI flag
+
+system:
+  inference:
+    num_cpus: 8
+    num_workers: 8
+    batch_size: 8      # increased from 2
+  seed: 42
+
+model:
+  out_channels: 3
+  input_size:
+  - 32
+  - 96
+  - 96
+  output_size:
+  - 32
+  - 96
+  - 96
+  mednext_size: S
+  mednext_kernel_size: 3
+  deep_supervision: false
+  loss_functions:
+  - WeightedBCEWithLogitsLoss
+  - DiceLoss
+  - WeightedBCEWithLogitsLoss
+  - DiceLoss
+  - WeightedMSELoss
+  loss_weights:
+  - 4.0
+  - 2.0
+  - 1.0
+  - 0.5
+  - 2.0
+  loss_kwargs:
+  - reduction: mean
+    pos_weight: 20.0
+  - sigmoid: true
+    smooth_nr: 1e-5
+    smooth_dr: 1e-5
+  - reduction: mean
+  - sigmoid: true
+    smooth_nr: 1e-5
+    smooth_dr: 1e-5
+  - tanh: true
+  multi_task_config:
+  - - 0
+    - 1
+    - binary
+    - - 0
+      - 1
+  - - 1
+    - 2
+    - instance_boundary
+    - - 2
+      - 3
+  - - 2
+    - 3
+    - skeleton_aware_edt
+    - - 4
+
+data:
+  image_transform:
+    clip_percentile_low: 0.005
+    clip_percentile_high: 0.995
+
+test:
+  data:
+    # Placeholder — overridden at runtime by step2_infer_tiles_array.sl
+    test_image:
+    - /projects/weilab/dataset/barcode/2026/umich/nd2_tiles/A1_ch1.tif
+    image_transform:
+      normalize: "0-1"
+      clip_percentile_low: 0.005
+      clip_percentile_high: 0.995
+
+inference:
+  sliding_window:
+    window_size:
+    - 32
+    - 256
+    - 256
+    stride:
+    - 16
+    - 128
+    - 128
+    blending: gaussian
+    sigma_scale: 0.25
+    padding_mode: reflect
+    pad_size:
+    - 16
+    - 32
+    - 32
+  test_time_augmentation:
+    enabled: true
+    channel_activations:
+    - - 0
+      - 1
+      - sigmoid
+    - - 1
+      - 2
+      - sigmoid
+    - - 2
+      - 3
+      - tanh
+  decoding:
+  - name: decode_instance_binary_contour_distance
+    kwargs:
+      binary_threshold:
+      - 0.7503891044149624
+      - 0.0046306263327246
+      contour_threshold:
+      - 0.48708101851244906
+      - 1.025119772551816
+      distance_threshold:
+      - -0.6695257662389609
+      - -0.07270575159140885
+      min_instance_size: 100
+      min_seed_size: 40
+  save_prediction:
+    output_formats:
+    - h5
+    - tiff
+  evaluation:
+    enabled: false

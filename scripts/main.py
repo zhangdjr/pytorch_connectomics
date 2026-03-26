@@ -289,6 +289,11 @@ def main():
             reset_early_stopping=args.reset_early_stopping,
         )
 
+    # Signal the model to apply EmptyPatchSkipWrapper in on_test_start (after ckpt loading)
+    if getattr(args, 'skip_empty_patches', False) and args.mode in ['test', 'tune', 'tune-test']:
+        model._apply_empty_skip = True
+        model._empty_threshold = getattr(args, 'empty_threshold', 0.02)
+
     # Create trainer (pass run_dir for checkpoints and logs, and checkpoint path for resume)
     trainer = create_trainer(
         cfg,
@@ -351,6 +356,13 @@ def main():
                 datamodule=datamodule,
                 ckpt_path=ckpt_path,
             )
+
+            # Print empty-patch skip statistics if wrapper was used
+            if getattr(args, 'skip_empty_patches', False):
+                from connectomics.inference import EmptyPatchSkipWrapper
+                inner = getattr(model.model, 'model', None)
+                if isinstance(inner, EmptyPatchSkipWrapper):
+                    inner.print_stats()
 
     except Exception as e:
         mode_name = args.mode.capitalize() if args.mode else "Operation"

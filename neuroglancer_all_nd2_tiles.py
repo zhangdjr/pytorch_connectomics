@@ -5,10 +5,13 @@ Displays tiles in their correct spatial positions using stage coordinates.
 
 Usage:
     python neuroglancer_all_nd2_tiles.py
+    python neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1
+    python neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1 --no-raw
     
 Then open the printed URL in your browser (use SSH tunnel if remote).
 """
 
+import argparse
 import neuroglancer
 import numpy as np
 import tifffile
@@ -17,10 +20,33 @@ from pathlib import Path
 
 # Paths
 tile_dir = Path('/projects/weilab/dataset/barcode/2026/umich/nd2_tiles')
-pred_dir = Path('outputs/fiber_retrain_all/20260311_223801/results')
+# Current ND2 pipeline writes per-tile TIFF predictions here.
+pred_dir = Path('last/results')
+
+parser = argparse.ArgumentParser(description='Visualize ND2 tiles in Neuroglancer')
+parser.add_argument(
+    '--tiles',
+    help='Comma-separated tile names to load, e.g. A1,A2,B1. Defaults to all tiles.',
+)
+parser.add_argument(
+    '--no-raw',
+    action='store_true',
+    help='Do not load raw image layers; only load segmentation layers.',
+)
+args = parser.parse_args()
 
 # Get all tiles
 tile_files = sorted(tile_dir.glob('*_ch1.tif'))
+if args.tiles:
+    selected_tiles = {tile.strip() for tile in args.tiles.split(',') if tile.strip()}
+    tile_files = [p for p in tile_files if p.stem.replace('_ch1', '') in selected_tiles]
+    missing_tiles = sorted(selected_tiles - {p.stem.replace('_ch1', '') for p in tile_files})
+    if missing_tiles:
+        print(f"Warning: requested tiles not found: {', '.join(missing_tiles)}")
+
+if not tile_files:
+    raise SystemExit("No tiles selected for visualization.")
+
 print(f"Found {len(tile_files)} tiles")
 
 # Load all tiles and metadata
@@ -28,19 +54,31 @@ tiles_data = []
 for tile_file in tile_files:
     tile_name = tile_file.stem.replace('_ch1', '')
     meta_file = tile_dir / f"{tile_name}_metadata.json"
-    pred_file = pred_dir / f"{tile_name}_ch1_prediction_fixed.tiff"
+    pred_candidates = [
+        pred_dir / f"{tile_name}_ch1_prediction.tiff",
+        pred_dir / f"{tile_name}_ch1_prediction_fixed.tiff",
+    ]
+    pred_file = next((p for p in pred_candidates if p.exists()), None)
     
     # Load metadata
     with open(meta_file) as f:
         metadata = json.load(f)
     
     # Load raw and prediction
-    raw = tifffile.imread(str(tile_file))
-    if pred_file.exists():
+    raw = None if args.no_raw else tifffile.imread(str(tile_file))
+    if pred_file is not None:
         pred = tifffile.imread(str(pred_file))
     else:
         print(f"Warning: No prediction for {tile_name}")
         pred = None
+
+    if raw is not None:
+        volume_shape = raw.shape
+    elif pred is not None:
+        volume_shape = pred.shape
+    else:
+        with tifffile.TiffFile(str(tile_file)) as tif:
+            volume_shape = tif.series[0].shape
     
     tiles_data.append({
         'name': tile_name,
@@ -48,9 +86,9 @@ for tile_file in tile_files:
         'pred': pred,
         'stage_pos': metadata['stage_position_um'],
         'pixel_size': metadata['pixel_size_um'],
-        'shape': raw.shape,
+        'shape': volume_shape,
     })
-    print(f"  {tile_name}: {raw.shape}, stage=({metadata['stage_position_um']['x']:.1f}, {metadata['stage_position_um']['y']:.1f}, {metadata['stage_position_um']['z']:.1f}) µm")
+    print(f"  {tile_name}: {volume_shape}, stage=({metadata['stage_position_um']['x']:.1f}, {metadata['stage_position_um']['y']:.1f}, {metadata['stage_position_um']['z']:.1f}) µm")
 
 # Voxel sizes in µm
 pixel_size = tiles_data[0]['pixel_size']  # Same for all tiles
@@ -89,14 +127,15 @@ dims = neuroglancer.CoordinateSpace(
 with viewer.txn() as s:
     for tile in tiles_data:
         # Raw image layer
-        raw_layer = neuroglancer.LocalVolume(
-            data=tile['raw'],
-            dimensions=dims,
-            voxel_offset=tile['offset_voxels'],
-        )
-        s.layers[f'{tile["name"]}_raw'] = neuroglancer.ImageLayer(
-            source=raw_layer,
-        )
+        if tile['raw'] is not None:
+            raw_layer = neuroglancer.LocalVolume(
+                data=tile['raw'],
+                dimensions=dims,
+                voxel_offset=tile['offset_voxels'],
+            )
+            s.layers[f'{tile["name"]}_raw'] = neuroglancer.ImageLayer(
+                source=raw_layer,
+            )
 
         # Segmentation layer
         if tile['pred'] is not None:

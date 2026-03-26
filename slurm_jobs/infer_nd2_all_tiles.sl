@@ -10,7 +10,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=11:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=zhangdjr@bc.edu
+#SBATCH --mail-user=liupen@bc.edu
 
 # Full pipeline: Extract all 13 tiles from ND2 → Run inference on all tiles
 
@@ -27,7 +27,7 @@ conda activate pytc
 
 export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:/home/zhangdjr/projects/umich-fiber/pytorch_connectomics:$PYTHONPATH
 
-WORK_DIR="/home/zhangdjr/projects/umich-fiber/pytorch_connectomics"
+WORK_DIR="/projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics"
 CONFIG="tutorials/fiber_nd2_all_tiles.yaml"
 CKPT="outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt"
 

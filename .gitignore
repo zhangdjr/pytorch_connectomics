@@ -163,6 +163,7 @@ logs/
 fiber_analysis/
 results_87slice/
 qc_gallery/
+checkpoints/
 
 # Large data files
 *.tiff
@@ -175,3 +176,4 @@ AGENT.md
 CLAUDE.md
 .claude/
 .codex/
+
