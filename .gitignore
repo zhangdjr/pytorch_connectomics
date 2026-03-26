@@ -116,6 +116,7 @@ dmypy.json
 # data
 *.h5
 *.sh
+!run_nd2_pipeline.sh
 ._*
 .DS_Store
 *.pth

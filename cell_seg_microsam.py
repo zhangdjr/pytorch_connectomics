@@ -5,7 +5,8 @@ Runs in the 'microsam' conda env, outputs NPZ files consumed by fiber_pipeline.p
 
 Usage:
     conda activate microsam
-    python cell_seg_microsam.py --tile A1 [--model_type vit_b_lm]
+    python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
+    python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache --tile A1
 
 Or via SLURM (see slurm_jobs/cell_seg_microsam.sl).
 """
@@ -22,24 +23,25 @@ from micro_sam.automatic_segmentation import (
 )
 
 
-# ============================================================================
-# Config
-# ============================================================================
+def detect_tiles(tile_dir):
+    """Auto-detect tile names from DAPI files in the tile directory."""
+    tile_dir = Path(tile_dir)
+    tiles = sorted(set(
+        p.name.replace("_ch0_dapi.tif", "")
+        for p in tile_dir.glob("*_ch0_dapi.tif")
+    ))
+    return tiles
 
-ND2_NAME = "A1-2003"
-TILE_DIR = Path("/projects/weilab/dataset/barcode/2026/umich/nd2_tiles")
-OUTPUT_DIR = Path(f"fiber_analysis/{ND2_NAME}/cache")
 
-ALL_TILES = ["A1", "A2", "A3", "B4", "B3", "B2", "B1", "C1", "C2", "C3", "D2", "D1", "E1"]
-
-
-def run_cell_seg(tile_name, model_type="vit_b_lm"):
+def run_cell_seg(tile_name, tile_dir, output_dir, model_type="vit_b_lm"):
     """Run micro-sam cell segmentation on DAPI channel for one tile."""
+    tile_dir = Path(tile_dir)
+    output_dir = Path(output_dir)
 
-    dapi_path = TILE_DIR / f"{tile_name}_ch0_dapi.tif"
-    output_path = OUTPUT_DIR / f"{tile_name}_cell_seg.npz"
+    dapi_path = tile_dir / f"{tile_name}_ch0_dapi.tif"
+    output_path = output_dir / f"{tile_name}_cell_seg.npz"
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     if output_path.exists():
         print(f"  Cached: {output_path}")
@@ -65,19 +67,32 @@ def run_cell_seg(tile_name, model_type="vit_b_lm"):
 
 def main():
     parser = argparse.ArgumentParser(description="micro-sam cell segmentation")
-    parser.add_argument("--tile", type=str, default="A1",
+    parser.add_argument("--tile", type=str, default="all",
                         help="Tile name (e.g. A1) or 'all' for all tiles")
+    parser.add_argument("--tile-dir", type=str,
+                        default="/projects/weilab/dataset/barcode/2026/umich/nd2_tiles",
+                        help="Directory containing extracted tile TIFFs")
+    parser.add_argument("--output-dir", type=str,
+                        default="fiber_analysis/A1-2003/cache",
+                        help="Output directory for cell seg NPZ files")
     parser.add_argument("--model_type", type=str, default="vit_b_lm",
                         help="micro-sam model type (default: vit_b_lm)")
     args = parser.parse_args()
 
-    tiles = ALL_TILES if args.tile == "all" else [args.tile]
+    if args.tile == "all":
+        tiles = detect_tiles(args.tile_dir)
+        if not tiles:
+            print(f"ERROR: No DAPI tiles found in {args.tile_dir}")
+            return
+        print(f"Auto-detected {len(tiles)} tiles: {', '.join(tiles)}")
+    else:
+        tiles = [args.tile]
 
     for tile in tiles:
         print(f"\n{'='*60}")
-        print(f"Cell Segmentation: {ND2_NAME} / {tile}")
+        print(f"Cell Segmentation: {tile}")
         print(f"{'='*60}")
-        run_cell_seg(tile, model_type=args.model_type)
+        run_cell_seg(tile, args.tile_dir, args.output_dir, model_type=args.model_type)
 
     print("\nDone.")
 

@@ -684,10 +684,15 @@ def load_tile_data(tile_name, config):
     pred_dir = config["pred_dir"]
     ch_names = config["channel_names"]
 
-    # Fiber segmentation mask
+    # Fiber segmentation mask (try _prediction_fixed.tiff first, then _prediction.tiff)
     pred_path = os.path.join(pred_dir, f"{tile_name}_ch1_prediction_fixed.tiff")
     if not os.path.exists(pred_path):
-        raise FileNotFoundError(f"Fiber segmentation not found: {pred_path}")
+        pred_path = os.path.join(pred_dir, f"{tile_name}_ch1_prediction.tiff")
+    if not os.path.exists(pred_path):
+        raise FileNotFoundError(
+            f"Fiber segmentation not found in {pred_dir}/ "
+            f"(tried {tile_name}_ch1_prediction_fixed.tiff and {tile_name}_ch1_prediction.tiff)"
+        )
     fiber_seg = tifffile.imread(pred_path)
     print(f"  Fiber seg: {fiber_seg.shape}, {len(np.unique(fiber_seg))-1} instances")
 
@@ -801,12 +806,18 @@ if __name__ == "__main__":
     parser.add_argument("--steps", default=None,
                         help="Comma-separated steps: cell_seg,skeletonize,extract,normalize,validate,csv")
     parser.add_argument("--output-dir", default=None, help="Output directory")
+    parser.add_argument("--tile-dir", default=None, help="Directory containing extracted tile TIFFs")
+    parser.add_argument("--pred-dir", default=None, help="Directory containing fiber seg predictions")
     parser.add_argument("--n-jobs", type=int, default=-1, help="Parallel jobs for skeletonization")
     args = parser.parse_args()
 
     config = get_config()
     if args.output_dir:
         config["output_dir"] = args.output_dir
+    if args.tile_dir:
+        config["tile_dir"] = args.tile_dir
+    if args.pred_dir:
+        config["pred_dir"] = args.pred_dir
     config["n_jobs"] = args.n_jobs
 
     steps = args.steps.split(",") if args.steps else None

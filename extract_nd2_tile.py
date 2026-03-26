@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Extract all tiles (Ch1 FITC) from ND2 file with metadata.
+Extract tiles from ND2 file with metadata.
 Loads the ND2 file once and extracts all tiles in a single pass.
 
 Usage:
-    python extract_nd2_tile.py                    # Extract all tiles
+    python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/
+    python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/ --all-channels
     python extract_nd2_tile.py --tiles 0 3 5      # Extract specific tiles
 """
 
@@ -16,14 +17,27 @@ import argparse
 from pathlib import Path
 
 
-def extract_all_tiles(nd2_path, output_dir, tile_indices=None):
+# Channel naming convention
+CHANNEL_SUFFIXES = {
+    0: "ch0_dapi",
+    1: "ch1",
+    2: "ch2_cfos",
+    3: "ch3_timestamp",
+}
+
+
+def extract_all_tiles(nd2_path, output_dir, tile_indices=None, all_channels=False):
     """
-    Extract Ch1 (FITC/fiber channel) from all tiles in one pass.
+    Extract tiles from ND2 file.
     
     Args:
         nd2_path: Path to ND2 file
         output_dir: Output directory for TIFFs and metadata JSONs
         tile_indices: List of tile indices to extract (None = all)
+        all_channels: If True, extract all channels. If False, only Ch1 (fiber).
+    
+    Returns:
+        List of tile names extracted.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -81,32 +95,38 @@ def extract_all_tiles(nd2_path, output_dir, tile_indices=None):
         full_data = f.asarray()  # Shape: (P, Z, C, Y, X)
         print(f"  Array shape: {full_data.shape}, dtype: {full_data.dtype}")
 
+        # --- Determine channels to extract ---
+        if all_channels:
+            channels_to_extract = list(range(n_channels))
+        else:
+            channels_to_extract = [1]  # Ch1 = FITC (fibers) only
+
         # --- Extract each tile ---
-        channel_idx = 1  # Ch1 = FITC (fibers)
-        results = []
+        tile_names = []
 
         for tile_idx in tile_indices:
             info = tile_info[tile_idx]
             tile_name = info['name']
+            tile_names.append(tile_name)
 
             print(f"\n{'='*60}")
             print(f"Tile {tile_idx}: {tile_name}")
             print(f"  Stage: ({info['stage_x']:.2f}, {info['stage_y']:.2f}, {info['stage_z']:.2f}) µm")
 
-            volume = full_data[tile_idx, :, channel_idx, :, :]
-            print(f"  Shape: {volume.shape}, range: [{volume.min()}, {volume.max()}]")
-
-            # Save TIFF
-            tiff_path = output_dir / f"{tile_name}_ch1.tif"
-            tifffile.imwrite(str(tiff_path), volume, compression='zlib')
-            print(f"  Saved: {tiff_path}")
+            for ch_idx in channels_to_extract:
+                volume = full_data[tile_idx, :, ch_idx, :, :]
+                suffix = CHANNEL_SUFFIXES.get(ch_idx, f"ch{ch_idx}")
+                tiff_path = output_dir / f"{tile_name}_{suffix}.tif"
+                tifffile.imwrite(str(tiff_path), volume, compression='zlib')
+                print(f"  Ch{ch_idx} ({suffix}): {volume.shape}, [{volume.min()}-{volume.max()}] → {tiff_path}")
 
             # Save metadata JSON
             metadata = {
                 'tile_idx': tile_idx,
                 'tile_name': tile_name,
-                'shape': list(volume.shape),
+                'shape': list(full_data[tile_idx, :, 0, :, :].shape),
                 'n_slices': n_z,
+                'n_channels': n_channels,
                 'pixel_size_um': pixel_size_um,
                 'stage_position_um': {
                     'x': info['stage_x'],
@@ -117,18 +137,15 @@ def extract_all_tiles(nd2_path, output_dir, tile_indices=None):
             json_path = output_dir / f"{tile_name}_metadata.json"
             with open(str(json_path), 'w') as jf:
                 json.dump(metadata, jf, indent=2)
-            print(f"  Saved: {json_path}")
-
-            results.append((tile_name, str(tiff_path), str(json_path)))
 
         # --- Summary ---
         print(f"\n{'='*60}")
-        print(f"EXTRACTION COMPLETE: {len(results)} tiles")
+        print(f"EXTRACTION COMPLETE: {len(tile_names)} tiles, {len(channels_to_extract)} channels each")
         print(f"{'='*60}")
-        for name, tiff, meta in results:
-            print(f"  {name}: {tiff}")
+        for name in tile_names:
+            print(f"  {name}")
 
-        return results
+        return tile_names
 
 
 if __name__ == '__main__':
@@ -139,6 +156,8 @@ if __name__ == '__main__':
                         help='Output directory')
     parser.add_argument('--tiles', nargs='*', type=int, default=None,
                         help='Tile indices to extract (default: all)')
+    parser.add_argument('--all-channels', action='store_true',
+                        help='Extract all channels (default: Ch1 fiber only)')
     args = parser.parse_args()
 
-    extract_all_tiles(args.nd2, args.output, args.tiles)
+    extract_all_tiles(args.nd2, args.output, args.tiles, all_channels=args.all_channels)

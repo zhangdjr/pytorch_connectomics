@@ -1,238 +1,278 @@
-# Fiber Segmentation Pipeline
+# Fiber Analysis Pipeline
 
-Fork of [PyTorch Connectomics](https://github.com/PytorchConnectomics/pytorch_connectomics) for **fiber instance segmentation** on confocal microscopy data (UMich barcode project).
+Automated pipeline for analyzing fiber structures in confocal microscopy ND2 images. Takes a raw ND2 file and produces a CSV spreadsheet with measurements for every detected fiber.
 
-**Pipeline:** Raw ND2/TIFF → deep learning inference → instance segmentation masks + CSV fiber coordinates.
+---
 
-## Quick Start
+## What Does This Pipeline Do?
+
+Given an ND2 microscopy file, the pipeline automatically:
+
+1. **Extracts** each tile and channel from the ND2 file
+2. **Detects fibers** using a trained deep learning model (GPU)
+3. **Detects cell bodies** using micro-sam segmentation
+4. **Analyzes each fiber** — measures length, extracts signal intensities from all 4 channels (DAPI, fiber, cfos, timestamp), links fibers to their parent cell bodies, and filters out invalid detections
+5. **Produces a CSV** with one row per fiber and 31 measurement columns
+
+**You only need to run one command.** Everything else is automatic.
+
+---
+
+## How to Run (Step by Step)
+
+### 1. Log in to the BC cluster
 
 ```bash
-# 1. Clone and install
-git clone <repo-url> pytorch_connectomics
-cd pytorch_connectomics
-conda env create -f environment.yml
-conda activate pytc
-pip install -e .
-
-# 2. Copy the model checkpoint
-mkdir -p checkpoints
-cp /projects/weilab/zhangdjr/umich-fiber/pytorch_connectomics/outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt checkpoints/
+ssh your_username@login.bc.edu
 ```
 
----
-
-## Running Inference
-
-### On TIFF files
-
-1. Copy and edit an existing config — update `test.data.test_image` with your file paths:
-   - **Single TIFFs:** use `tutorials/fiber_retrain_all_infer_new.yaml` as a template
-   - **ND2 tiles:** use `tutorials/fiber_nd2_all_tiles.yaml` as a template
-
-2. Submit via SLURM (see `slurm_jobs/` for working examples):
-   ```bash
-   sbatch slurm_jobs/infer_nd2_all_tiles.sl
-   ```
-   Or run directly:
-   ```bash
-   export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:$(pwd):$PYTHONPATH
-   python scripts/main.py --config tutorials/your_config.yaml --mode test --checkpoint checkpoints/last.ckpt
-   ```
-
-3. Results appear in `outputs/<experiment_name>/<timestamp>/results/`:
-   - `*_prediction.h5` — Instance segmentation (HDF5)
-   - `*_prediction.tiff` — Instance segmentation (TIFF)
-   - Each voxel value = fiber instance ID (0 = background)
-
-### On ND2 files
-
-1. Extract tiles: `python extract_nd2_tile.py --nd2_path /path/to/file.nd2 --output_dir /path/to/nd2_tiles/ --channel 1`
-2. Run inference as above using the extracted TIFFs
-3. Generate CSV: `python generate_fiber_coordinates.py --tile_dir /path/to/nd2_tiles/ --pred_dir outputs/.../results/ --output_dir fiber_analysis/my_results/`
-
-See `slurm_jobs/infer_nd2_all_tiles.sl` for a complete end-to-end example (extract → infer → CSV).
-
----
-
-## Fiber Analysis Pipeline
-
-After fiber segmentation inference, run the full analysis pipeline to get per-fiber CSV readouts (skeleton geometry, channel signals, cell association, validation).
-
-### Prerequisites
-Two conda environments are needed:
-- **`pytc`** — main env for inference + pipeline (PyTorch, neuroglancer, scipy, optuna, etc.)
-- **`microsam`** — separate env for micro-sam cell segmentation (can't coexist with pytc's GPU PyTorch)
+### 2. Go to the project folder
 
 ```bash
-# pytc env (main)
+cd /home/zhangdjr/projects/umich-fiber/pytorch_connectomics
+```
+
+> If you cloned your own copy, `cd` to that directory instead.
+
+### 3. Process one ND2 file
+
+```bash
+sbatch run_nd2_pipeline.sh /path/to/your_file.nd2
+```
+
+**Example:**
+```bash
+sbatch run_nd2_pipeline.sh /projects/weilab/dataset/barcode/2026/broad_dongqing/1-A1-2005.nd2
+```
+
+That's it! The job is now running on the cluster. You'll get an email when it starts and when it finishes.
+
+### 4. Process many ND2 files at once
+
+```bash
+for nd2 in /projects/weilab/dataset/barcode/2026/broad_dongqing/*.nd2; do
+    sbatch run_nd2_pipeline.sh "$nd2"
+done
+```
+
+Each file runs as a separate job in parallel. No need to wait for one to finish before starting the next.
+
+### 5. Check job status
+
+```bash
+squeue -u $USER
+```
+
+### 6. Find your results
+
+Results are saved to `fiber_results/{nd2_name}/`:
+
+```
+fiber_results/
+└── 1-A1-2005/                           # one folder per ND2 file
+    ├── 1-A1-2005_combined.csv           # <-- THE MAIN OUTPUT (all tiles combined)
+    ├── 1-A1-2005_A1.csv                 # per-tile CSV (tile A1)
+    ├── 1-A1-2005_B5.csv                 # per-tile CSV (tile B5)
+    ├── tiles/                           # extracted channel images
+    ├── fiber_seg/                       # fiber segmentation masks
+    └── cache/                           # intermediate files (cell seg, skeletons)
+```
+
+**The file you want is `{nd2_name}_combined.csv`** — open it in Excel, Google Sheets, or Python/R.
+
+---
+
+## What's in the CSV?
+
+Each row is one detected fiber. Key columns:
+
+| Column | What it means |
+|--------|---------------|
+| `fiber_id` | Unique ID for each fiber |
+| `tile_name` | Which tile the fiber came from (e.g., A1, B5) |
+| `is_valid` | `True` if the fiber passed quality filters, `False` if it's too short or poorly shaped |
+| `fiber_length_um` | Length of the fiber in micrometers |
+| `parent_cell_id` | Which cell body the fiber belongs to (0 = no cell found) |
+| `dapi_mean` | Average DAPI (Ch0) signal along the fiber |
+| `fiber_mean` | Average fiber (Ch1) signal along the fiber |
+| `cfos_mean` | Average cfos (Ch2) signal along the fiber |
+| `timestamp_mean` | Average timestamp (Ch3) signal along the fiber |
+
+Each channel also has `_median`, `_min`, `_max`, and `_std` columns (e.g., `cfos_median`, `cfos_max`).
+
+> **Tip:** Filter by `is_valid == True` to get only high-quality fiber measurements.
+
+---
+
+## Runtime
+
+- **~30 min** per ND2 file with 4 tiles (on 1 A100 GPU)
+- **~1–2 hours** for larger ND2 files with 12–23 tiles
+- Multiple files run in parallel as separate SLURM jobs
+
+---
+
+## First-Time Setup
+
+You only need to do this once. If you're using the shared project at `/home/zhangdjr/projects/umich-fiber/pytorch_connectomics`, this is already done — skip to "How to Run" above.
+
+### Clone the repo
+
+```bash
+git clone git@github.com:zhangdjr/pytorch_connectomics.git
+cd pytorch_connectomics
+```
+
+### Create the conda environments
+
+Two environments are needed (the pipeline switches between them automatically):
+
+```bash
+# Main environment (fiber segmentation + analysis)
 conda env create -f environment.yml
 conda activate pytc
 pip install -e .
 
-# microsam env (cell segmentation only)
+# Cell segmentation environment (micro-sam)
 conda env create -f environment_microsam.yml
 ```
 
-> **Why two envs?** micro-sam's conda-forge dependencies replace GPU PyTorch with CPU-only.
-> The SLURM scripts handle env activation automatically (`cell_seg_microsam.sl` → microsam, `fiber_pipeline_*.sl` → pytc).
+> **Why two envs?** micro-sam requires packages that conflict with the GPU version of PyTorch. The pipeline handles switching automatically — you don't need to worry about it.
 
-### Step 1: Extract tiles from ND2
-```bash
-conda activate pytc
-python extract_nd2_tile.py --nd2_path /path/to/file.nd2 --output_dir /path/to/nd2_tiles/ --all_channels
-```
-
-### Step 2: Run fiber segmentation inference
-```bash
-sbatch slurm_jobs/infer_nd2_all_tiles.sl
-```
-
-### Step 3: Run micro-sam cell segmentation
-```bash
-# Edit cell_seg_microsam.py to set ND2_NAME and TILE_DIR, then:
-sbatch slurm_jobs/cell_seg_microsam.sl
-```
-Outputs: `fiber_analysis/{nd2_name}/cache/{tile}_cell_seg.npz`
-
-### Step 4: Run fiber analysis pipeline
-```bash
-# Single tile:
-sbatch slurm_jobs/fiber_pipeline_a1.sl
-
-# All 13 tiles in parallel (array job):
-sbatch slurm_jobs/fiber_pipeline_all.sl
-```
-Outputs: `fiber_analysis/{nd2_name}/{nd2_name}_{tile}.csv`
-
-### Step 5: Verify in Neuroglancer
-```bash
-conda activate pytc
-python -i verify_a1.py   # or verify_a2.py
-# Then SSH tunnel: ssh -L 8889:localhost:8889 user@login.bc.edu
-```
-
-### Output CSV Columns (31)
-
-| Column | Description |
-|--------|-------------|
-| `fiber_id` | Fiber instance ID (from segmentation) |
-| `nd2_name` / `tile_name` | Source tile identifiers |
-| `is_valid` | Passes all validation filters |
-| `parent_cell_id` | Cell label at soma (from micro-sam cell seg) |
-| `fiber_length_um` | Skeleton arc length in µm |
-| `pca_linearity` | PCA ratio (1.0 = perfectly linear) |
-| `centroid_{z,y,x}_um` | Skeleton midpoint in µm (arc-length halfway point along the spline-fitted centerline, NOT the volumetric centroid) |
-| `{dapi,fiber,cfos,timestamp}_{mean,median,min,max,std}` | Per-channel signal stats along skeleton |
-| `mean_soma_dapi` | Mean DAPI brightness at soma |
-
----
-
-## Viewing Results
-
-### Neuroglancer (3D viewer)
+### Verify the model checkpoint exists
 
 ```bash
-python neuroglancer_all_nd2_tiles.py   # Multi-tile ND2 viewer
-python neuroglancer_all_volumes.py      # Single-volume viewer
-python -i verify_a1.py                 # Single-tile QC (raw + seg + skeletons)
+ls outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
 ```
 
-The scripts print a `localhost` URL. Since the viewer runs on the compute node, set up an SSH tunnel from your local machine:
+If it's missing, copy it from the shared location:
 ```bash
-ssh -L 8889:localhost:8889 your_username@login.bc.edu
+cp /projects/weilab/zhangdjr/umich-fiber/pytorch_connectomics/outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt \
+   outputs/fiber_retrain_all/20260311_223801/checkpoints/
 ```
-Then open the printed URL in your browser.
-
-**Tips:** Scroll = Z-slices, Ctrl+scroll = zoom, click fiber = highlight, `s` = toggle sidebar.
-
----
-
-## Training / Fine-Tuning
-
-See `tutorials/fiber_retrain_all.yaml` for the full training config.
-
-```bash
-# Train from scratch
-python scripts/main.py --config tutorials/fiber_retrain_all.yaml
-
-# Fine-tune from existing checkpoint
-python scripts/main.py --config tutorials/your_config.yaml --checkpoint checkpoints/last.ckpt
-```
-
-- **Data format:** single-channel TIFF (raw) + integer TIFF (instance mask, 0 = background)
-- **Training data:** `/projects/weilab/dataset/barcode/2026/umich/` (e.g., `0112-5-CA1-4_2.tif` + `_mask.tif`)
 
 ---
 
 ## Troubleshooting
 
-### Stale cached predictions
-The inference pipeline caches `*_prediction.h5` and `*_tta_prediction.h5` files. If you re-run with a different model/config, **delete the old cached files first** or inference will be skipped:
+### How do I check if my job is still running?
 ```bash
-rm -f outputs/<experiment>/<timestamp>/results/<volume>_prediction.h5
-rm -f outputs/<experiment>/<timestamp>/results/<volume>_tta_prediction.h5
+squeue -u $USER
 ```
+If it shows your job with state `R` (running) or `PD` (pending), it's still going.
 
-### Stale pipeline caches
-The analysis pipeline caches skeletons and cell seg in `fiber_analysis/{nd2_name}/cache/`. Delete relevant NPZ files if you want to re-run a step:
+### How do I see the job log?
 ```bash
-rm -f fiber_analysis/A1-2003/cache/A1_skeletons.npz   # re-run skeletonization
-rm -f fiber_analysis/A1-2003/cache/A1_cell_seg.npz     # re-run cell seg
-rm -f fiber_analysis/A1-2003/A1-2003_A1.csv            # re-generate CSV
+cat logs/nd2_pipe_JOBID.out    # main output
+cat logs/nd2_pipe_JOBID.err    # errors (if any)
+```
+Replace `JOBID` with the number printed when you ran `sbatch`.
+
+### My job failed — what do I do?
+Check the error log first:
+```bash
+cat logs/nd2_pipe_JOBID.err
+```
+Common issues:
+- **Out of memory** — the ND2 file might be very large. Contact the pipeline maintainer.
+- **File not found** — double-check that the ND2 file path is correct and you have read permission.
+
+### I want to re-run a file from scratch
+Delete the old results folder and re-submit:
+```bash
+rm -rf fiber_results/1-A1-2005/
+sbatch run_nd2_pipeline.sh /path/to/1-A1-2005.nd2
 ```
 
-### Few/no fibers detected
-Your config is probably missing percentile clipping. The model was trained with clipping, so inference **must** match:
-```yaml
-test:
-  data:
-    image_transform:
-      clip_percentile_low: 0.005
-      clip_percentile_high: 0.995
+### I only want to re-run part of the pipeline
+The pipeline caches intermediate results. Delete the specific cache file to re-run that step:
+```bash
+# Re-run cell segmentation for tile A1
+rm fiber_results/{nd2_name}/cache/A1_cell_seg.npz
+
+# Re-run skeletonization for tile A1
+rm fiber_results/{nd2_name}/cache/A1_skeletons.npz
+
+# Then re-submit the job — it will skip completed steps and redo the deleted ones
+sbatch run_nd2_pipeline.sh /path/to/your_file.nd2
 ```
-All provided configs already include this — only an issue if you write a config from scratch.
 
-### MedNeXt import error
-Add to PYTHONPATH: `export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:$(pwd):$PYTHONPATH`
-(Already included in all SLURM scripts.)
+---
 
-### Out of GPU memory
-Reduce `inference.sliding_window.window_size` in your config (e.g., `[32, 128, 128]` instead of `[32, 256, 256]`).
+## Viewing Results in 3D (Optional)
+
+You can visually inspect the results using Neuroglancer (a browser-based 3D viewer):
+
+```bash
+conda activate pytc
+python -i verify_1a12005.py
+```
+
+This prints a URL. To open it in your browser, set up an SSH tunnel from your **local machine** (not the cluster):
+```bash
+ssh -L 8889:localhost:8889 your_username@login.bc.edu
+```
+Then paste the URL into your browser.
+
+**Navigation:** scroll = Z slices, Ctrl+scroll = zoom, click a fiber = highlight it.
+
+---
+
+## Advanced: Manual Step-by-Step
+
+If you need to run individual steps separately (e.g., for debugging or custom workflows):
+
+```bash
+# 1. Extract tiles from ND2
+conda activate pytc
+python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles --all-channels
+
+# 2. Fiber segmentation inference (GPU)
+python scripts/main.py --config /path/to/config.yaml --mode test \
+    --checkpoint outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
+
+# 3. Cell segmentation (requires microsam env)
+conda activate microsam
+python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
+
+# 4. Fiber analysis (per tile)
+conda activate pytc
+python fiber_pipeline.py --tile A1 --nd2-name my_sample \
+    --tile-dir /path/to/tiles --pred-dir /path/to/fiber_seg --output-dir /path/to/output
+```
+
+---
+
+## Advanced: Training / Fine-Tuning the Model
+
+See `tutorials/fiber_retrain_all.yaml` for the full training config.
+
+```bash
+python scripts/main.py --config tutorials/fiber_retrain_all.yaml
+```
+
+- **Data format:** single-channel TIFF (raw) + integer TIFF (instance mask, 0 = background)
+- **Training data:** `/projects/weilab/dataset/barcode/2026/umich/`
 
 ---
 
 ## Project Structure
 
 ```
-├── scripts/main.py                # Entry point for training and inference
-├── connectomics/                  # Core library (model, data, inference, config)
-├── tutorials/                     # YAML configs
-├── slurm_jobs/                    # SLURM batch scripts for BC cluster
-│   ├── cell_seg_microsam.sl       # Cell seg (microsam env, all tiles)
-│   ├── fiber_pipeline_all.sl      # Analysis pipeline (array job, all tiles)
-│   ├── fiber_pipeline_a1.sl       # Analysis pipeline (single tile)
-│   └── infer_nd2_all_tiles.sl     # Fiber segmentation inference
-├── fiber_pipeline.py              # Main analysis pipeline (skeletonize → signals → CSV)
-├── cell_seg_microsam.py           # Standalone micro-sam cell segmentation
-├── extract_nd2_tile.py            # Extract tiles from ND2 files
-├── verify_a1.py / verify_a2.py   # Neuroglancer QC viewers
-├── neuroglancer_all_nd2_tiles.py  # Multi-tile 3D viewer
-├── neuroglancer_all_volumes.py    # Single-volume 3D viewer
-├── generate_fiber_coordinates.py  # Legacy: segmentation masks → coordinate CSV
-├── environment.yml                # Conda environment spec (pytc env)
-└── environment_microsam.yml       # Conda environment spec (microsam env)
+run_nd2_pipeline.sh                # THE MAIN SCRIPT — processes one ND2 file end-to-end
+fiber_pipeline.py                  # Analysis engine (skeletonize → signals → CSV)
+cell_seg_microsam.py               # Cell body segmentation (micro-sam)
+extract_nd2_tile.py                # ND2 tile/channel extraction
+scripts/main.py                    # Deep learning inference entry point
+connectomics/                      # Core library (model, data, inference)
+tutorials/                         # YAML config files
+slurm_jobs/                        # Additional SLURM scripts (legacy)
+environment.yml                    # Conda env spec (pytc)
+environment_microsam.yml           # Conda env spec (microsam)
 ```
-
-### Key configs
-
-| Config | Purpose |
-|--------|---------|
-| `tutorials/fiber_nd2_all_tiles.yaml` | ND2 multi-tile inference |
-| `tutorials/fiber_retrain_all_infer_new.yaml` | Standalone TIFF inference |
-| `tutorials/fiber_retrain_all.yaml` | Model training |
 
 ### Model checkpoint
 ```
 outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
 ```
-MedNeXt-S, 256 MB, trained on UMich hippocampus CA1 at 162.9nm XY / 0.4µm Z.
+MedNeXt-S, 256 MB, trained on UMich hippocampus CA1 data at 162.9 nm XY / 0.4 µm Z resolution.

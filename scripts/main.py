@@ -222,9 +222,15 @@ def main():
             
             results_path = str(output_base / results_folder_name)
             dirpath = results_path
-            # Override test output directory in config
+            # Override test output directory ONLY if user didn't set it in YAML
+            # (setup_output_paths defaults to "outputs/{config_stem}/results")
             if hasattr(cfg, "test") and hasattr(cfg.test, "data"):
-                cfg.test.data.output_path = results_path
+                current_output = getattr(cfg.test.data, "output_path", None)
+                default_output = str(Path(f"outputs/{Path(args.config).stem}") / "results")
+                if current_output is None or current_output == default_output:
+                    cfg.test.data.output_path = results_path
+                else:
+                    print(f"📂 Keeping user-specified test output: {current_output}")
 
         run_dir = setup_run_directory(args.mode, cfg, dirpath)
         print(f"📂 Output base: {output_base}")
