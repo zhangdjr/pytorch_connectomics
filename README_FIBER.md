@@ -74,12 +74,13 @@ fiber_results/
     ├── 1-A1-2005_combined_profiles.npz       # <-- FULL INTENSITY PROFILES (all tiles)
     ├── 1-A1-2005_A1.csv                      # per-tile CSV
     ├── 1-A1-2005_A1_profiles.npz             # per-tile profiles
-    ├── tiles/                                # extracted channel images
     ├── fiber_seg/                            # fiber segmentation masks
     └── cache/                                # intermediate files (cell seg, skeletons)
 ```
 
 **The file you want is `{nd2_name}_combined.csv`** — open it in Excel, Google Sheets, or Python/R.
+
+> **Note:** The `tiles/` directory is automatically deleted after the pipeline finishes to save disk space (~95% savings). Tiles can always be re-extracted from the original ND2 file.
 
 ---
 
