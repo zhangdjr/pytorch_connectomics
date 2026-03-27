@@ -1,304 +1,326 @@
-<a href="https://github.com/zudi-lin/pytorch_connectomics">
-<img src="./.github/logo_fullname.png" width="450"></a>
+# Fiber Analysis Pipeline
 
-<p align="left">
-    <a href="https://www.python.org/">
-      <img src="https://img.shields.io/badge/Python-3.8+-ff69b4.svg" /></a>
-    <a href= "https://pytorch.org/">
-      <img src="https://img.shields.io/badge/PyTorch-1.8+-2BAF2B.svg" /></a>
-    <a href= "https://lightning.ai/">
-      <img src="https://img.shields.io/badge/Lightning-2.0+-792EE5.svg" /></a>
-    <a href= "https://monai.io/">
-      <img src="https://img.shields.io/badge/MONAI-0.9+-00A3E0.svg" /></a>
-    <a href= "https://github.com/zudi-lin/pytorch_connectomics/blob/master/LICENSE">
-      <img src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
-    <a href= "https://zudi-lin.github.io/pytorch_connectomics/build/html/index.html">
-      <img src="https://img.shields.io/badge/Doc-Latest-2BAF2B.svg" /></a>
-    <a href= "https://join.slack.com/t/pytorchconnectomics/shared_invite/zt-obufj5d1-v5_NndNS5yog8vhxy4L12w">
-      <img src="https://img.shields.io/badge/Slack-Join-CC8899.svg" /></a>
-    <a href= "https://arxiv.org/abs/2112.05754">
-      <img src="https://img.shields.io/badge/arXiv-2112.05754-FF7F50.svg" /></a>
-</p>
+Automated pipeline for analyzing fiber structures in confocal microscopy ND2 images. Takes a raw ND2 file and produces a CSV spreadsheet with measurements for every detected fiber.
 
 ---
 
-## What is PyTorch Connectomics (PyTC)?
+## What Does This Pipeline Do?
 
-**Automatic segmentation of neural structures in electron microscopy images** 🔬🧠
+Given an ND2 microscopy file, the pipeline automatically:
 
-PyTorch Connectomics (PyTC) helps neuroscientists:
-- ✅ **Segment** mitochondria, synapses, and neurons in 3D EM volumes
-- ✅ **Train models** without deep ML expertise
-- ✅ **Process** large-scale connectomics datasets efficiently
+1. **Extracts** each tile and channel from the ND2 file
+2. **Detects fibers** using a trained deep learning model (GPU)
+3. **Detects cell bodies** using micro-sam segmentation
+4. **Analyzes each fiber** — measures length, extracts signal intensities from all 4 channels (DAPI, fiber, cfos, timestamp), links fibers to their parent cell bodies, and filters out invalid detections
+5. **Produces a CSV** with one row per fiber and 11 measurement columns
 
-**Built on:** [PyTorch Lightning](https://lightning.ai/) + [MONAI](https://monai.io/) + [nnU-Net](https://github.com/MIC-DKFZ/nnUNet) for modern, scalable deep learning.
+**You only need to run one command.** Everything else is automatic.
 
 ---
 
-## Quick Start (5 Minutes)
+## How to Run (Step by Step)
 
-### 1. Install
-
-Choose your preferred method:
-
-<details open>
-<summary><b>🚀 One-Command Install (Recommended)</b></summary>
+### 1. Log in to the BC cluster
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zudi-lin/pytorch_connectomics/refs/heads/master/quickstart.sh | bash
-conda activate pytc
+ssh your_username@a002.bc.edu
 ```
 
-Done! ✅
-</details>
-
-<details>
-<summary><b>🐍 Python Script Install</b></summary>
+### 2. Go to the project folder
 
 ```bash
-git clone https://github.com/zudi-lin/pytorch_connectomics.git
+cd /home/zhangdjr/projects/umich-fiber/pytorch_connectomics
+```
+
+> If you cloned your own copy, `cd` to that directory instead.
+
+### 3. Process one ND2 file
+
+```bash
+sbatch run_nd2_pipeline.sh /path/to/your_file.nd2
+```
+
+**Example:**
+```bash
+sbatch run_nd2_pipeline.sh /projects/weilab/dataset/barcode/2026/broad_dongqing/1-A1-2005.nd2
+```
+
+That's it! The job is now running on the cluster. You'll get an email when it starts and when it finishes.
+
+### 4. Process many ND2 files at once
+
+```bash
+for nd2 in /projects/weilab/dataset/barcode/2026/broad_dongqing/*.nd2; do
+    sbatch run_nd2_pipeline.sh "$nd2"
+done
+```
+
+Each file runs as a separate job in parallel. No need to wait for one to finish before starting the next.
+
+### 5. Check job status
+
+```bash
+squeue -u $USER
+```
+
+### 6. Find your results
+
+Results are saved to `fiber_results/{nd2_name}/`:
+
+```
+fiber_results/
+└── 1-A1-2005/                                # one folder per ND2 file
+    ├── 1-A1-2005_combined.csv                # <-- SUMMARY CSV (all tiles combined)
+    ├── 1-A1-2005_combined_profiles.npz       # <-- FULL INTENSITY PROFILES (all tiles)
+    ├── 1-A1-2005_A1.csv                      # per-tile CSV
+    ├── 1-A1-2005_A1_profiles.npz             # per-tile profiles
+    ├── fiber_seg/                            # fiber segmentation masks
+    └── cache/                                # intermediate files (cell seg, skeletons)
+```
+
+**The file you want is `{nd2_name}_combined.csv`** — open it in Excel, Google Sheets, or Python/R.
+
+> **Note:** The `tiles/` directory is automatically deleted after the pipeline finishes to save disk space (~95% savings). Tiles can always be re-extracted from the original ND2 file.
+
+---
+
+## What's in the CSV?
+
+Each row is one detected fiber. Columns:
+
+| Column | What it means |
+|--------|---------------|
+| `fiber_id` | Unique ID for each fiber |
+| `nd2_name` | Source ND2 file name |
+| `tile_name` | Which tile the fiber came from (e.g., A1, B5) |
+| `is_valid` | `True` if the fiber passed quality filters, `False` otherwise |
+| `parent_cell_id` | Which cell body the fiber belongs to (0 = no cell found) |
+| `fiber_length_um` | Length of the fiber in micrometers |
+| `pca_linearity` | How straight the fiber is (1.0 = perfectly straight) |
+| `centroid_z_um` | Fiber midpoint Z coordinate in micrometers |
+| `centroid_y_um` | Fiber midpoint Y coordinate in micrometers |
+| `centroid_x_um` | Fiber midpoint X coordinate in micrometers |
+| `mean_soma_dapi` | Average DAPI brightness at the cell body |
+
+> **Tip:** Filter by `is_valid == True` to get only high-quality fiber measurements.
+>
+> Per-channel intensity statistics are NOT in the CSV — use the intensity profiles (NPZ) instead. See below.
+
+### Full Intensity Profiles
+
+In addition to the summary CSV, the pipeline saves **full 1000-point intensity profiles** for every fiber. These are the raw signal values sampled along the fiber's skeleton from one end to the other.
+
+The profiles are saved as `.npz` files (a compressed NumPy format):
+
+```
+fiber_results/1-A1-2005/
+├── 1-A1-2005_combined_profiles.npz    # <-- all tiles combined
+├── 1-A1-2005_A1_profiles.npz          # per-tile profiles
+└── 1-A1-2005_B5_profiles.npz
+```
+
+**How to load profiles in Python:**
+```python
+import numpy as np
+
+data = np.load("fiber_results/1-A1-2005/1-A1-2005_combined_profiles.npz")
+
+# What's inside:
+data["fiber_ids"]   # (N,) array of fiber IDs
+data["is_valid"]    # (N,) boolean — True for valid fibers
+data["tile_names"]  # (N,) array of tile names (e.g., "A1", "B5")
+data["dapi"]        # (N, 1000) — DAPI intensity profile for each fiber
+data["fiber"]       # (N, 1000) — fiber channel intensity
+data["cfos"]        # (N, 1000) — cfos intensity
+data["timestamp"]   # (N, 1000) — timestamp intensity
+
+# Example: plot cfos profile for fiber #42
+import matplotlib.pyplot as plt
+idx = np.where(data["fiber_ids"] == 42)[0][0]
+plt.plot(data["cfos"][idx])
+plt.xlabel("Position along fiber (0 = one end, 999 = other end)")
+plt.ylabel("cfos intensity")
+plt.title(f"Fiber {42} cfos profile")
+plt.show()
+
+# Example: get all valid cfos profiles
+valid = data["is_valid"]
+cfos_valid = data["cfos"][valid]  # shape (N_valid, 1000)
+```
+
+Each profile has 1000 evenly-spaced points along the fiber's skeleton. Point 0 is one end of the fiber, point 999 is the other end.
+
+---
+
+## Runtime
+
+- **~30 min** per ND2 file with 4 tiles (on 1 A100 GPU)
+- **~1–2 hours** for larger ND2 files with 12–23 tiles
+- Multiple files run in parallel as separate SLURM jobs
+
+---
+
+## First-Time Setup
+
+You only need to do this once. If you're using the shared project at `/home/zhangdjr/projects/umich-fiber/pytorch_connectomics`, this is already done — skip to "How to Run" above.
+
+### Clone the repo
+
+```bash
+git clone git@github.com:zhangdjr/pytorch_connectomics.git
 cd pytorch_connectomics
-python install.py
+```
+
+### Create the conda environments
+
+Two environments are needed (the pipeline switches between them automatically):
+
+```bash
+# Main environment (fiber segmentation + analysis)
+conda env create -f environment.yml
 conda activate pytc
-```
-</details>
+pip install -e .
 
-<details>
-<summary><b>🛠️ Manual Install</b></summary>
+# Cell segmentation environment (micro-sam)
+conda env create -f environment_microsam.yml
+```
+
+> **Why two envs?** micro-sam requires packages that conflict with the GPU version of PyTorch. The pipeline handles switching automatically — you don't need to worry about it.
+
+### Verify the model checkpoint exists
 
 ```bash
-conda create -n pytc python=3.10 -y
+ls outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
+```
+
+If it's missing, copy it from the shared location:
+```bash
+cp /projects/weilab/zhangdjr/umich-fiber/pytorch_connectomics/outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt \
+   outputs/fiber_retrain_all/20260311_223801/checkpoints/
+```
+
+---
+
+## Troubleshooting
+
+### How do I check if my job is still running?
+```bash
+squeue -u $USER
+```
+If it shows your job with state `R` (running) or `PD` (pending), it's still going.
+
+### How do I see the job log?
+```bash
+cat logs/nd2_pipe_JOBID.out    # main output
+cat logs/nd2_pipe_JOBID.err    # errors (if any)
+```
+Replace `JOBID` with the number printed when you ran `sbatch`.
+
+### My job failed — what do I do?
+Check the error log first:
+```bash
+cat logs/nd2_pipe_JOBID.err
+```
+Common issues:
+- **Out of memory** — the ND2 file might be very large. Contact the pipeline maintainer.
+- **File not found** — double-check that the ND2 file path is correct and you have read permission.
+
+### I want to re-run a file from scratch
+Delete the old results folder and re-submit:
+```bash
+rm -rf fiber_results/1-A1-2005/
+sbatch run_nd2_pipeline.sh /path/to/1-A1-2005.nd2
+```
+
+### I only want to re-run part of the pipeline
+The pipeline caches intermediate results. Delete the specific cache file to re-run that step:
+```bash
+# Re-run cell segmentation for tile A1
+rm fiber_results/{nd2_name}/cache/A1_cell_seg.npz
+
+# Re-run skeletonization for tile A1
+rm fiber_results/{nd2_name}/cache/A1_skeletons.npz
+
+# Then re-submit the job — it will skip completed steps and redo the deleted ones
+sbatch run_nd2_pipeline.sh /path/to/your_file.nd2
+```
+
+---
+
+## Viewing Results in 3D (Optional)
+
+You can visually inspect the results using Neuroglancer (a browser-based 3D viewer):
+
+```bash
 conda activate pytc
-conda install -c conda-forge numpy h5py cython connected-components-3d -y
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-git clone https://github.com/zudi-lin/pytorch_connectomics.git
-cd pytorch_connectomics
-pip install -e . --no-build-isolation
+python -i verify_1a12005.py
 ```
-</details>
 
-**📖 Detailed instructions:** [INSTALLATION.md](INSTALLATION.md) | **🚀 Quick start:** [QUICKSTART.md](QUICKSTART.md)
+This prints a URL. To open it in your browser, set up an SSH tunnel from your **local machine** (not the cluster):
+```bash
+ssh -L 8889:localhost:8889 your_username@login.bc.edu
+```
+Then paste the URL into your browser.
+
+**Navigation:** scroll = Z slices, Ctrl+scroll = zoom, click a fiber = highlight it.
 
 ---
 
-### 2. Run Demo
+## Advanced: Manual Step-by-Step
 
-Verify your installation with a 30-second demo:
+If you need to run individual steps separately (e.g., for debugging or custom workflows):
 
 ```bash
-python scripts/main.py --demo
-```
+# 1. Extract tiles from ND2
+conda activate pytc
+python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles --all-channels
 
-**Expected output:**
-```
-🎯 PyTorch Connectomics Demo Mode
-...
-✅ DEMO COMPLETED SUCCESSFULLY!
+# 2. Fiber segmentation inference (GPU)
+python scripts/main.py --config /path/to/config.yaml --mode test \
+    --checkpoint outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
+
+# 3. Cell segmentation (requires microsam env)
+conda activate microsam
+python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
+
+# 4. Fiber analysis (per tile)
+conda activate pytc
+python fiber_pipeline.py --tile A1 --nd2-name my_sample \
+    --tile-dir /path/to/tiles --pred-dir /path/to/fiber_seg --output-dir /path/to/output
 ```
 
 ---
 
-### 3. Try a Tutorial
+## Advanced: Training / Fine-Tuning the Model
+
+See `tutorials/fiber_retrain_all.yaml` for the full training config.
+
 ```bash
-# Download tutorial data (~50 MB)
-just download lucchi++
+python scripts/main.py --config tutorials/fiber_retrain_all.yaml
 ```
 
-#### 3.1 Run inference with a pretrained checkpoint (no training required):
+- **Data format:** single-channel TIFF (raw) + integer TIFF (instance mask, 0 = background)
+- **Training data:** `/projects/weilab/dataset/barcode/2026/umich/`
 
-- Ours: 0.913 Jaccard index (Foreground-IoU)
-- Prior art: 0.907 (systematic comparsions in [Casser et.al 20](https://arxiv.org/abs/1812.06024))
-```bash
-# Download pretrained checkpoint
-mkdir -p checkpoints
-curl -L "https://huggingface.co/pytc/tutorial2.0/resolve/main/mito_lucchi%2B%2B_15k.ckpt?download=true" \
-  -o checkpoints/mito_lucchi_pp_15k.ckpt
+---
 
-# Run inference
-just test mito_lucchi++ checkpoints/mito_lucchi_pp_15k.ckpt
+## Project Structure
+
+```
+run_nd2_pipeline.sh                # THE MAIN SCRIPT — processes one ND2 file end-to-end
+fiber_pipeline.py                  # Analysis engine (skeletonize → signals → CSV)
+cell_seg_microsam.py               # Cell body segmentation (micro-sam)
+extract_nd2_tile.py                # ND2 tile/channel extraction
+scripts/main.py                    # Deep learning inference entry point
+connectomics/                      # Core library (model, data, inference)
+tutorials/                         # YAML config files
+slurm_jobs/                        # Additional SLURM scripts (legacy)
+environment.yml                    # Conda env spec (pytc)
+environment_microsam.yml           # Conda env spec (microsam)
 ```
 
-#### 3.2 Train from scratch
-- current settings: num_gpus=4, num_cpus=8, batch_size=16
-- change settings in [tutorials/mito_lucchi++.yaml](https://github.com/PytorchConnectomics/pytorch_connectomics/blob/master/tutorials/mito_lucchi%2B%2B.yaml#L6)
-```bash
-# Quick test (1 batch)
-just train mito_lucchi++ --fast-dev-run
-
-# Full training
-just train mito_lucchi++
+### Model checkpoint
 ```
-
-**Monitor progress:**
-```bash
-just tensorboard lucchi++
+outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
 ```
-
-**Run inference from your trained checkpoint:**
-```bash
-just test lucchi++ outputs/lucchi++/$EXPERIMENT_DATE/checkpoints/best.ckpt
-```
----
-
-## Key Features
-
-### 🚀 Modern Architecture (v2.0)
-- **PyTorch Lightning:** Automatic distributed training, mixed precision, callbacks
-- **MONAI:** Medical imaging models, transforms, losses optimized for 3D volumes
-- **Hydra/OmegaConf:** Type-safe configurations with CLI overrides
-- **Extensible:** Easy to add custom models, losses, and transforms
-
-### 🏗️ State-of-the-Art Models
-- **MONAI Models:** BasicUNet3D, UNet, UNETR, Swin UNETR
-- **MedNeXt (MICCAI 2023):** ConvNeXt-based architecture for medical imaging
-- **Custom Models:** Easily integrate your own architectures
-
-### ⚡ Performance
-- **Distributed Training:** Automatic multi-GPU with DDP
-- **Mixed Precision:** FP16/BF16 training for 2x speedup
-- **Efficient Data Loading:** Pre-loaded caching, MONAI transforms
-- **Gradient Accumulation:** Train with large effective batch sizes
-
-### 📊 Monitoring & Logging
-- **TensorBoard:** Training curves, images, metrics
-- **Weights & Biases:** Experiment tracking (optional)
-- **Early Stopping:** Automatic stopping when training plateaus
-- **Checkpointing:** Save best models automatically
-
----
-
-## Documentation
-
-- 🚀 **[Quick Start Guide](QUICKSTART.md)** - Get running in 5 minutes
-- 📦 **[Installation Guide](INSTALLATION.md)** - Detailed setup instructions
-- 📚 **[Full Documentation](https://connectomics.readthedocs.io)** - Complete reference
-- 🎯 **[Tutorials](tutorials/)** - Example configurations
-- 🔧 **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
-- 👨‍💻 **[Developer Guide](.claude/CLAUDE.md)** - Contributing and architecture
-
----
-
-## Example: Train a Model
-
-Create a config file (`my_config.yaml`):
-
-```yaml
-system:
-  training:
-    num_gpus: 1
-    num_cpus: 4
-    batch_size: 2
-
-model:
-  architecture: monai_basic_unet3d
-  in_channels: 1
-  out_channels: 2
-  loss_functions: [DiceLoss]
-
-data:
-  train_image: "path/to/train_image.h5"
-  train_label: "path/to/train_label.h5"
-  patch_size: [128, 128, 128]
-
-optimization:
-  max_epochs: 100
-  precision: "16-mixed"  # Mixed precision for speed
-
-optimizer:
-  name: AdamW
-  lr: 1e-4
-```
-
-Train:
-```bash
-python scripts/main.py --config my_config.yaml
-```
-
-Override from CLI:
-```bash
-python scripts/main.py --config my_config.yaml data.batch_size=4 optimization.max_epochs=200
-```
-
----
-
-## Supported Models
-
-### MONAI Models
-- **BasicUNet3D** - Fast, simple 3D U-Net (recommended for beginners)
-- **UNet** - U-Net with residual units
-- **UNETR** - Transformer-based architecture
-- **Swin UNETR** - Swin Transformer U-Net
-
-### MedNeXt Models (MICCAI 2023)
-- **MedNeXt-S** - 5.6M parameters (fast)
-- **MedNeXt-B** - 10.5M parameters (balanced)
-- **MedNeXt-M** - 17.6M parameters (accurate)
-- **MedNeXt-L** - 61.8M parameters (state-of-the-art)
-
-**See:** [.claude/MEDNEXT.md](.claude/MEDNEXT.md) for MedNeXt integration guide
-
----
-
-## Data Formats
-
-- **HDF5** (.h5) - Primary format (recommended)
-- **TIFF** (.tif, .tiff) - Multi-page TIFF stacks
-- **Zarr** - For large-scale datasets
-- **NumPy** - Direct array loading
-
-**Input shape:** `(batch, channels, depth, height, width)`
-
----
-
-## Community & Support
-
-- 💬 **Slack:** [Join our community](https://join.slack.com/t/pytorchconnectomics/shared_invite/zt-obufj5d1-v5_NndNS5yog8vhxy4L12w) (friendly and helpful!)
-- 🐛 **Issues:** [GitHub Issues](https://github.com/zudi-lin/pytorch_connectomics/issues)
-- 📧 **Contact:** See lab website
-- 📄 **Paper:** [arXiv:2112.05754](https://arxiv.org/abs/2112.05754)
-
----
-
-## Citation
-
-If PyTorch Connectomics helps your research, please cite:
-
-```bibtex
-@article{lin2021pytorch,
-  title={PyTorch Connectomics: A Scalable and Flexible Segmentation Framework for EM Connectomics},
-  author={Lin, Zudi and Wei, Donglai and Lichtman, Jeff and Pfister, Hanspeter},
-  journal={arXiv preprint arXiv:2112.05754},
-  year={2021}
-}
-```
-
----
-
-## Acknowledgements
-
-**Powered by:**
-- [PyTorch Lightning](https://lightning.ai/) - Lightning AI Team
-- [MONAI](https://monai.io/) - MONAI Consortium
-- [MedNeXt](https://github.com/MIC-DKFZ/MedNeXt) - DKFZ Medical Image Computing
-
-**Supported by:**
-- NSF awards IIS-1835231, IIS-2124179, IIS-2239688
-
----
-
-## License
-
-**MIT License** - See [LICENSE](LICENSE) for details.
-
-Copyright © PyTorch Connectomics Contributors
-
----
-
-## Version History
-
-- **v2.0** (2025) - Complete rewrite with PyTorch Lightning + MONAI
-- **v1.0** (2021) - Initial release
-
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for detailed release notes.
-
----
+MedNeXt-S, 256 MB, trained on UMich hippocampus CA1 data at 162.9 nm XY / 0.4 µm Z resolution.
