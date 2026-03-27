@@ -58,7 +58,8 @@ TILE_DIR="${OUTPUT_DIR}/tiles"
 FIBER_SEG_DIR="${OUTPUT_DIR}/fiber_seg"
 CACHE_DIR="${OUTPUT_DIR}/cache"
 
-# Pipeline code directory (hardcoded — SLURM copies scripts to /var/spool/slurmd/)
+# Pipeline code directory — CHANGE THIS to where you cloned the repo
+# (hardcoded because SLURM copies scripts to /var/spool/slurmd/)
 SCRIPT_DIR="/home/zhangdjr/projects/umich-fiber/pytorch_connectomics"
 
 # Model checkpoint (fixed)
