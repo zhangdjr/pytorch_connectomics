@@ -292,6 +292,12 @@ def run_signal_extraction(skeletons, raw_channels, cell_seg, fiber_seg, config):
 
     # Collect all skeleton points into one big array for batched interpn
     fid_list = list(skeletons.keys())
+    
+    # Handle empty skeleton case
+    if not fid_list:
+        print("  No skeletons found - skipping signal extraction")
+        return skeletons
+    
     all_centerlines = [skeletons[fid]["centerline"] for fid in fid_list]
     n_pts_per_fiber = [len(cl) for cl in all_centerlines]
     all_points = np.concatenate(all_centerlines, axis=0)  # (N_total, 3) in nm
@@ -805,6 +811,14 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
 
     if skeletons is None:
         raise RuntimeError("No skeletons available. Run 'skeletonize' step first.")
+
+    # Early exit if no fibers detected in this tile
+    if len(skeletons) == 0:
+        print(f"\n  No fibers detected in tile {tile_name} — skipping remaining steps")
+        print(f"\n{'#'*60}")
+        print(f"# PIPELINE COMPLETE: {nd2_name} / {tile_name} (0 fibers)")
+        print(f"{'#'*60}")
+        return None
 
     # Signal extraction
     if "extract" in steps:
