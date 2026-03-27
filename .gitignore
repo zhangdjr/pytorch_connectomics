@@ -130,7 +130,14 @@ dmypy.json
 datasets/*
 others/
 locals/
-outputs/
+outputs/*
+!outputs/fiber_retrain_all/
+outputs/fiber_retrain_all/*
+!outputs/fiber_retrain_all/20260311_223801/
+outputs/fiber_retrain_all/20260311_223801/*
+!outputs/fiber_retrain_all/20260311_223801/checkpoints/
+outputs/fiber_retrain_all/20260311_223801/checkpoints/*
+!outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
 tmpwdir/
 *.iml
 .idea/
@@ -168,6 +175,7 @@ qc_gallery/
 *.tiff
 *.tif
 *.ckpt
+!outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt
 *.pth.tar
 
 # AI agent configs
@@ -175,3 +183,4 @@ AGENT.md
 CLAUDE.md
 .claude/
 .codex/
+fiber_results/

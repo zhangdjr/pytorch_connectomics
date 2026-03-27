@@ -85,23 +85,25 @@ fiber_results/
 
 ## What's in the CSV?
 
-Each row is one detected fiber. Key columns:
+Each row is one detected fiber. Columns:
 
 | Column | What it means |
 |--------|---------------|
 | `fiber_id` | Unique ID for each fiber |
+| `nd2_name` | Source ND2 file name |
 | `tile_name` | Which tile the fiber came from (e.g., A1, B5) |
 | `is_valid` | `True` if the fiber passed quality filters, `False` if it's too short or poorly shaped |
-| `fiber_length_um` | Length of the fiber in micrometers |
 | `parent_cell_id` | Which cell body the fiber belongs to (0 = no cell found) |
-| `dapi_mean` | Average DAPI (Ch0) signal along the fiber |
-| `fiber_mean` | Average fiber (Ch1) signal along the fiber |
-| `cfos_mean` | Average cfos (Ch2) signal along the fiber |
-| `timestamp_mean` | Average timestamp (Ch3) signal along the fiber |
-
-Each channel also has `_median`, `_min`, `_max`, and `_std` columns (e.g., `cfos_median`, `cfos_max`).
+| `fiber_length_um` | Length of the fiber in micrometers |
+| `pca_linearity` | How straight the fiber is (1.0 = perfectly straight) |
+| `centroid_z_um` | Fiber midpoint Z coordinate in micrometers |
+| `centroid_y_um` | Fiber midpoint Y coordinate in micrometers |
+| `centroid_x_um` | Fiber midpoint X coordinate in micrometers |
+| `mean_soma_dapi` | Average DAPI brightness at the cell body |
 
 > **Tip:** Filter by `is_valid == True` to get only high-quality fiber measurements.
+>
+> Per-channel intensity statistics are NOT in the CSV — use the intensity profiles (NPZ) instead. See below.
 
 ### Full Intensity Profiles
 

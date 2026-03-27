@@ -207,7 +207,6 @@ inference:
       min_seed_size: 40
   save_prediction:
     output_formats:
-    - h5
     - tiff
   evaluation:
     enabled: false
@@ -226,6 +225,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Clean up TTA intermediate files (large float32 caches, not needed downstream)
+echo "Cleaning up inference intermediates..."
+rm -f "${FIBER_SEG_DIR}"/*_tta_prediction.tiff "${FIBER_SEG_DIR}"/*_tta_prediction.h5
 echo "Step 2 complete."
 echo ""
 

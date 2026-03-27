@@ -643,16 +643,6 @@ def export_csv(validated, nd2_name, tile_name, output_dir, config):
             "centroid_x_um": round(centroid_x, 2),
         }
 
-        # Per-channel summary stats
-        for ch_idx, ch_name in ch_names.items():
-            if ch_name in signals:
-                sig = signals[ch_name]
-                row[f"{ch_name}_mean"] = round(float(np.mean(sig)), 2)
-                row[f"{ch_name}_median"] = round(float(np.median(sig)), 2)
-                row[f"{ch_name}_min"] = round(float(np.min(sig)), 2)
-                row[f"{ch_name}_max"] = round(float(np.max(sig)), 2)
-                row[f"{ch_name}_std"] = round(float(np.std(sig)), 2)
-
         # DAPI mean (soma brightness)
         row["mean_soma_dapi"] = round(data["mean_soma"], 2)
 
