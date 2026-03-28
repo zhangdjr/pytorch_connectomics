@@ -43,12 +43,12 @@ if [ $# -lt 1 ]; then
     echo "Usage: $0 <nd2_file> [output_base_dir]"
     echo ""
     echo "  nd2_file        Path to the ND2 file"
-    echo "  output_base_dir Base directory for outputs (default: fiber_results/)"
+    echo "  output_base_dir Base directory for outputs (default: /projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results)"
     exit 1
 fi
 
 ND2_FILE="$(realpath "$1")"
-OUTPUT_BASE="${2:-fiber_results}"
+OUTPUT_BASE="${2:-/projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results}"
 
 # ---- Derived paths ----
 ND2_BASENAME="$(basename "$ND2_FILE" .nd2)"

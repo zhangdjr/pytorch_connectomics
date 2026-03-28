@@ -55,9 +55,9 @@ done
 squeue -u $USER
 ```
 
-Results are saved to `fiber_results/{nd2_name}/`:
+Results are saved to `/projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results/{nd2_name}/`:
 ```
-fiber_results/1-A1-2005/
+.../fiber_results/1-A1-2005/
 ├── 1-A1-2005_combined.csv           # <-- SUMMARY CSV (all tiles)
 ├── 1-A1-2005_combined_profiles.npz  # <-- INTENSITY PROFILES (all tiles)
 ├── 1-A1-2005_A1.csv                 # per-tile CSV
@@ -97,7 +97,7 @@ The pipeline also saves **1000-point intensity profiles** along each fiber's ske
 ```python
 import numpy as np
 
-data = np.load("fiber_results/1-A1-2005/1-A1-2005_combined_profiles.npz")
+data = np.load("/projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results/1-A1-2005/1-A1-2005_combined_profiles.npz")
 
 data["fiber_ids"]   # (N,) fiber IDs
 data["is_valid"]    # (N,) boolean
