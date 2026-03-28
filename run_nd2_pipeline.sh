@@ -1,360 +1,402 @@
 #!/bin/bash
-#SBATCH --job-name=nd2_pipe
-#SBATCH --output=logs/nd2_pipe_%j.out
-#SBATCH --error=logs/nd2_pipe_%j.err
-#SBATCH --partition=short
-#SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
-#SBATCH --time=6:00:00
-#SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=zhangdjr@bc.edu
 # =============================================================================
-# End-to-end fiber analysis pipeline: ND2 → segmentation → CSV readouts
+# ND2 full fiber pipeline launcher (managed mode)
+#
+# Stages:
+#   Step 1 (CPU):       Extract ND2 tiles (all channels)
+#   Step 2 (GPU array): Fiber segmentation inference per tile
+#   Step 3 (GPU array): Cell segmentation (micro-sam) per tile
+#   Step 4 (CPU array): Fiber analysis per tile
+#   Step 5 (CPU):       Merge per-tile CSV + profile NPZ outputs
 #
 # Usage:
-#   sbatch run_nd2_pipeline.sh /path/to/sample.nd2 [output_base_dir]
-#   bash   run_nd2_pipeline.sh /path/to/sample.nd2 [output_base_dir]
-#
-# This script chains 5 steps, switching conda envs as needed:
-#   1. Extract all tiles + channels from ND2 file (pytc env)
-#   2. Run fiber segmentation inference (pytc env, GPU)
-#   3. Run micro-sam cell segmentation (microsam env, GPU)
-#   4. Run fiber analysis pipeline on each tile (pytc env)
-#   5. Combine per-tile CSVs into master CSV
-#
-# Output directory structure:
-#   {output_base}/{nd2_basename}/
-#     ├── tiles/                  # extracted channel TIFFs
-#     ├── fiber_seg/              # fiber segmentation predictions
-#     ├── cache/                  # cell seg NPZ, skeleton NPZ
-#     ├── {nd2_basename}_{tile}.csv  # per-tile CSVs
-#     └── {nd2_basename}_combined.csv # master CSV
+#   bash run_nd2_pipeline.sh --nd2 /path/to/sample.nd2
+#   bash run_nd2_pipeline.sh --nd2 /path/to/sample.nd2 --run-id 20260326_prod_v1
+#   bash run_nd2_pipeline.sh --nd2 /path/to/sample.nd2 --skip-step1
+#   bash run_nd2_pipeline.sh --nd2 /path/to/sample.nd2 --only-merge
 # =============================================================================
-
-# NOTE: delay strict mode until after sourcing bashrc (which may have
-# unbound vars or commands that return non-zero)
-source ~/.bashrc 2>/dev/null || true
 
 set -euo pipefail
 
-# ---- Parse arguments ----
-if [ $# -lt 1 ]; then
-    echo "Usage: $0 <nd2_file> [output_base_dir]"
-    echo ""
-    echo "  nd2_file        Path to the ND2 file"
-    echo "  output_base_dir Base directory for outputs (default: fiber_results/)"
-    exit 1
-fi
+WORK_DIR="/projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics"
+RUNS_ROOT="/projects/weilab/dataset/barcode/2026/umich/fiber_runs_full"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+ND2_PATH=""
+ND2_ID=""
+CKPT="outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt"
+TEMPLATE="tutorials/fiber_nd2_single_tile.yaml"
+MAIL_USER="${USER}@bc.edu"
+TILE_NAMES_CSV=""
+CELL_SEG_MODEL_TYPE="vit_b_lm"
+FIBER_N_JOBS=16
 
-ND2_FILE="$(realpath "$1")"
-OUTPUT_BASE="${2:-fiber_results}"
+SKIP_STEP1=false
+SKIP_STEP2=false
+SKIP_STEP3=false
+SKIP_STEP4=false
+ONLY_MERGE=false
 
-# ---- Derived paths ----
-ND2_BASENAME="$(basename "$ND2_FILE" .nd2)"
-OUTPUT_BASE="$(realpath -m "${OUTPUT_BASE}")"
-OUTPUT_DIR="${OUTPUT_BASE}/${ND2_BASENAME}"
-TILE_DIR="${OUTPUT_DIR}/tiles"
-FIBER_SEG_DIR="${OUTPUT_DIR}/fiber_seg"
-CACHE_DIR="${OUTPUT_DIR}/cache"
-
-# Pipeline code directory (hardcoded — SLURM copies scripts to /var/spool/slurmd/)
-SCRIPT_DIR="/home/zhangdjr/projects/umich-fiber/pytorch_connectomics"
-
-# Model checkpoint (fixed)
-CKPT="${SCRIPT_DIR}/outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt"
-INFERENCE_YAML_TEMPLATE="${SCRIPT_DIR}/tutorials/fiber_nd2_all_tiles.yaml"
-
-echo "============================================================"
-echo "FIBER ANALYSIS PIPELINE"
-echo "============================================================"
-echo "ND2 file:    ${ND2_FILE}"
-echo "ND2 name:    ${ND2_BASENAME}"
-echo "Output dir:  ${OUTPUT_DIR}"
-echo "Script dir:  ${SCRIPT_DIR}"
-echo "Start time:  $(date)"
-echo "============================================================"
-echo ""
-
-mkdir -p "${TILE_DIR}" "${FIBER_SEG_DIR}" "${CACHE_DIR}" logs
-
-# ============================================================================
-# STEP 1: Extract all tiles + all channels from ND2
-# ============================================================================
-echo "============================================================"
-echo "STEP 1/5: Extracting tiles from ND2..."
-echo "============================================================"
-
-conda activate pytc
-export PYTHONPATH="/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:${SCRIPT_DIR}:${PYTHONPATH:-}"
-
-python -u "${SCRIPT_DIR}/extract_nd2_tile.py" \
-    --nd2 "${ND2_FILE}" \
-    --output "${TILE_DIR}" \
-    --all-channels
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Tile extraction failed!"
-    exit 1
-fi
-
-# ---- Auto-detect tile names from extracted files ----
-TILE_NAMES=()
-for f in "${TILE_DIR}"/*_ch1.tif; do
-    basename_f="$(basename "$f")"
-    tile_name="${basename_f%_ch1.tif}"
-    TILE_NAMES+=("$tile_name")
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --nd2)
+            ND2_PATH="$2"
+            shift 2
+            ;;
+        --run-id)
+            RUN_ID="$2"
+            shift 2
+            ;;
+        --nd2-id)
+            ND2_ID="$2"
+            shift 2
+            ;;
+        --runs-root)
+            RUNS_ROOT="$2"
+            shift 2
+            ;;
+        --work-dir)
+            WORK_DIR="$2"
+            shift 2
+            ;;
+        --checkpoint)
+            CKPT="$2"
+            shift 2
+            ;;
+        --template)
+            TEMPLATE="$2"
+            shift 2
+            ;;
+        --tile-names)
+            TILE_NAMES_CSV="$2"
+            shift 2
+            ;;
+        --cell-seg-model)
+            CELL_SEG_MODEL_TYPE="$2"
+            shift 2
+            ;;
+        --fiber-n-jobs)
+            FIBER_N_JOBS="$2"
+            shift 2
+            ;;
+        --mail-user)
+            MAIL_USER="$2"
+            shift 2
+            ;;
+        --skip-step1)
+            SKIP_STEP1=true
+            shift
+            ;;
+        --skip-step2)
+            SKIP_STEP2=true
+            shift
+            ;;
+        --skip-step3)
+            SKIP_STEP3=true
+            shift
+            ;;
+        --skip-step4)
+            SKIP_STEP4=true
+            shift
+            ;;
+        --only-merge)
+            ONLY_MERGE=true
+            SKIP_STEP1=true
+            SKIP_STEP2=true
+            SKIP_STEP3=true
+            SKIP_STEP4=true
+            shift
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1"
+            exit 1
+            ;;
+    esac
 done
 
-N_TILES=${#TILE_NAMES[@]}
-if [ "$N_TILES" -eq 0 ]; then
-    echo "ERROR: No tiles extracted!"
-    exit 1
-fi
-echo ""
-echo "Detected ${N_TILES} tiles: ${TILE_NAMES[*]}"
-echo ""
-
-# ============================================================================
-# STEP 2: Generate inference YAML and run fiber segmentation
-# ============================================================================
-echo "============================================================"
-echo "STEP 2/5: Fiber segmentation inference (${N_TILES} tiles)..."
-echo "============================================================"
-
-# Generate a temporary YAML config with the correct tile paths
-TEMP_YAML="${OUTPUT_DIR}/inference_config.yaml"
-
-# Build the test_image list
-TEST_IMAGE_LIST=""
-for tile in "${TILE_NAMES[@]}"; do
-    TEST_IMAGE_LIST="${TEST_IMAGE_LIST}    - ${TILE_DIR}/${tile}_ch1.tif
-"
-done
-
-cat > "${TEMP_YAML}" << YAMLEOF
-_base_: ${SCRIPT_DIR}/tutorials/bases/mednext.yaml
-experiment_name: fiber_retrain_all
-description: "Auto-generated inference config for ${ND2_BASENAME}"
-
-system:
-  inference:
-    num_cpus: 4
-    num_workers: 4
-    batch_size: 1
-  seed: 42
-
-model:
-  out_channels: 3
-  input_size: [32, 96, 96]
-  output_size: [32, 96, 96]
-  mednext_size: S
-  mednext_kernel_size: 3
-  deep_supervision: false
-  loss_functions:
-  - WeightedBCEWithLogitsLoss
-  - DiceLoss
-  - WeightedBCEWithLogitsLoss
-  - DiceLoss
-  - WeightedMSELoss
-  loss_weights: [4.0, 2.0, 1.0, 0.5, 2.0]
-  loss_kwargs:
-  - {reduction: mean, pos_weight: 20.0}
-  - {sigmoid: true, smooth_nr: 1e-5, smooth_dr: 1e-5}
-  - {reduction: mean}
-  - {sigmoid: true, smooth_nr: 1e-5, smooth_dr: 1e-5}
-  - {tanh: true}
-  multi_task_config:
-  - [0, 1, binary, [0, 1]]
-  - [1, 2, instance_boundary, [2, 3]]
-  - [2, 3, skeleton_aware_edt, [4]]
-
-data:
-  image_transform:
-    clip_percentile_low: 0.005
-    clip_percentile_high: 0.995
-
-test:
-  data:
-    test_image:
-${TEST_IMAGE_LIST}    output_path: "${FIBER_SEG_DIR}"
-    image_transform:
-      normalize: "0-1"
-      clip_percentile_low: 0.005
-      clip_percentile_high: 0.995
-
-inference:
-  sliding_window:
-    window_size: [32, 256, 256]
-    stride: [16, 128, 128]
-    blending: gaussian
-    sigma_scale: 0.25
-    padding_mode: reflect
-    pad_size: [16, 32, 32]
-  test_time_augmentation:
-    enabled: true
-    channel_activations:
-    - [0, 1, sigmoid]
-    - [1, 2, sigmoid]
-    - [2, 3, tanh]
-  decoding:
-  - name: decode_instance_binary_contour_distance
-    kwargs:
-      binary_threshold: [0.7503891044149624, 0.0046306263327246]
-      contour_threshold: [0.48708101851244906, 1.025119772551816]
-      distance_threshold: [-0.6695257662389609, -0.07270575159140885]
-      min_instance_size: 100
-      min_seed_size: 40
-  save_prediction:
-    output_formats:
-    - h5
-    - tiff
-  evaluation:
-    enabled: false
-YAMLEOF
-
-echo "Generated inference config: ${TEMP_YAML}"
-echo ""
-
-python -u "${SCRIPT_DIR}/scripts/main.py" \
-    --config "${TEMP_YAML}" \
-    --mode test \
-    --checkpoint "${CKPT}"
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Fiber segmentation inference failed!"
+if [ -z "$ND2_PATH" ]; then
+    echo "ERROR: --nd2 is required"
     exit 1
 fi
 
-echo "Step 2 complete."
-echo ""
-
-# ============================================================================
-# STEP 3: Cell segmentation (micro-sam, needs microsam env)
-# ============================================================================
-echo "============================================================"
-echo "STEP 3/5: Cell segmentation (micro-sam, ${N_TILES} tiles)..."
-echo "============================================================"
-
-conda activate microsam
-
-python -u "${SCRIPT_DIR}/cell_seg_microsam.py" \
-    --tile all \
-    --tile-dir "${TILE_DIR}" \
-    --output-dir "${CACHE_DIR}"
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Cell segmentation failed!"
+if [ ! -f "$ND2_PATH" ]; then
+    echo "ERROR: ND2 file not found: $ND2_PATH"
     exit 1
 fi
 
-echo "Step 3 complete."
-echo ""
-
-# ============================================================================
-# STEP 4: Fiber analysis pipeline (per tile)
-# ============================================================================
-echo "============================================================"
-echo "STEP 4/5: Fiber analysis pipeline (${N_TILES} tiles)..."
-echo "============================================================"
-
-conda activate pytc
-
-for tile in "${TILE_NAMES[@]}"; do
-    echo ""
-    echo "--- Processing tile: ${tile} ---"
-    python -u "${SCRIPT_DIR}/fiber_pipeline.py" \
-        --tile "${tile}" \
-        --nd2-name "${ND2_BASENAME}" \
-        --tile-dir "${TILE_DIR}" \
-        --pred-dir "${FIBER_SEG_DIR}" \
-        --output-dir "${OUTPUT_BASE}" \
-        --n-jobs 16
-done
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Fiber analysis pipeline failed!"
+if [ ! -d "$WORK_DIR" ]; then
+    echo "ERROR: work dir not found: $WORK_DIR"
     exit 1
 fi
 
-echo "Step 4 complete."
-echo ""
+cd "$WORK_DIR"
 
-# ============================================================================
-# STEP 5: Combine per-tile CSVs into master CSV
-# ============================================================================
-echo "============================================================"
-echo "STEP 5/5: Combining CSV files..."
-echo "============================================================"
+ND2_PATH="$(realpath "$ND2_PATH")"
+RUNS_ROOT="$(realpath -m "$RUNS_ROOT")"
 
-COMBINED_CSV="${OUTPUT_DIR}/${ND2_BASENAME}_combined.csv"
-FIRST=true
+if [ -z "$ND2_ID" ]; then
+    ND2_BASENAME="$(basename "$ND2_PATH")"
+    ND2_ID="${ND2_BASENAME%.*}"
+fi
 
-for csv_file in "${OUTPUT_DIR}/${ND2_BASENAME}"_*.csv; do
-    # Skip the combined CSV itself
-    if [[ "$csv_file" == *"_combined.csv" ]]; then
-        continue
-    fi
-    if [ "$FIRST" = true ]; then
-        # Include header from first file
-        cat "$csv_file" > "${COMBINED_CSV}"
-        FIRST=false
-    else
-        # Skip header for subsequent files
-        tail -n +2 "$csv_file" >> "${COMBINED_CSV}"
-    fi
-done
+SAFE_ND2_ID="$(echo "$ND2_ID" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-40)"
 
-if [ "$FIRST" = true ]; then
-    echo "WARNING: No per-tile CSVs found to combine!"
+RUN_ROOT="${RUNS_ROOT}/${RUN_ID}"
+ND2_ROOT="${RUN_ROOT}/${ND2_ID}"
+INPUT_DIR="${ND2_ROOT}/input"
+TILE_DIR="${ND2_ROOT}/tiles"
+PRED_DIR="${ND2_ROOT}/pred"
+POSTPROC_BASE="${ND2_ROOT}/postproc"
+POSTPROC_ND2_DIR="${POSTPROC_BASE}/${ND2_ID}"
+CACHE_DIR="${POSTPROC_ND2_DIR}/cache"
+LOG_DIR="${ND2_ROOT}/logs"
+META_DIR="${ND2_ROOT}/meta"
+QC_DIR="${ND2_ROOT}/qc"
+
+mkdir -p "$INPUT_DIR" "$TILE_DIR" "$PRED_DIR" "$POSTPROC_BASE" "$CACHE_DIR" "$LOG_DIR" "$META_DIR" "$QC_DIR"
+ln -sfn "$ND2_PATH" "${INPUT_DIR}/$(basename "$ND2_PATH")"
+
+TILE_NAMES_FILE="${META_DIR}/tile_names.txt"
+
+write_tile_names_from_csv() {
+    local csv="$1"
+    : > "$TILE_NAMES_FILE"
+    IFS=',' read -r -a names <<< "$csv"
+    for t in "${names[@]}"; do
+        t="$(echo "$t" | xargs)"
+        [ -n "$t" ] && echo "$t" >> "$TILE_NAMES_FILE"
+    done
+}
+
+detect_tile_names_from_existing_tiles() {
+    find "$TILE_DIR" -maxdepth 1 -type f -name '*_ch1.tif' -printf '%f\n' \
+        | sed 's/_ch1\.tif$//' | sort -u > "$TILE_NAMES_FILE"
+}
+
+detect_tile_names_from_nd2() {
+    python - "$ND2_PATH" > "$TILE_NAMES_FILE" <<'PY'
+import sys
+
+try:
+    import nd2
+except Exception as exc:
+    raise RuntimeError(f"nd2 import failed: {exc}")
+
+nd2_path = sys.argv[1]
+
+with nd2.ND2File(nd2_path) as f:
+    names = []
+    for loop in f.experiment:
+        if getattr(loop, "type", "") == "XYPosLoop":
+            for point in loop.parameters.points:
+                names.append(str(point.name))
+            break
+
+if not names:
+    raise RuntimeError("no XYPosLoop tile names found")
+
+for name in names:
+    print(name)
+PY
+}
+
+if [ -n "$TILE_NAMES_CSV" ]; then
+    write_tile_names_from_csv "$TILE_NAMES_CSV"
+elif [ "$SKIP_STEP1" = true ] && find "$TILE_DIR" -maxdepth 1 -name '*_ch1.tif' | grep -q .; then
+    detect_tile_names_from_existing_tiles
 else
-    N_ROWS=$(tail -n +2 "${COMBINED_CSV}" | wc -l)
-    echo "Combined CSV: ${COMBINED_CSV} (${N_ROWS} fibers)"
+    if ! detect_tile_names_from_nd2; then
+        echo "INFO: direct python tile discovery failed, retrying with conda env 'pytc'"
+        set +u
+        if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+            . "$HOME/miniconda3/etc/profile.d/conda.sh"
+        elif [ -f "/home/liupen/miniconda3/etc/profile.d/conda.sh" ]; then
+            . "/home/liupen/miniconda3/etc/profile.d/conda.sh"
+        else
+            source ~/.bashrc >/dev/null 2>&1 || true
+        fi
+        set -u
+        conda activate pytc
+        detect_tile_names_from_nd2
+    fi
 fi
 
+if [ ! -s "$TILE_NAMES_FILE" ]; then
+    echo "ERROR: failed to resolve tile names. Pass --tile-names explicitly."
+    exit 1
+fi
+
+mapfile -t TILE_NAMES_ARRAY < "$TILE_NAMES_FILE"
+TILE_COUNT="${#TILE_NAMES_ARRAY[@]}"
+ARRAY_RANGE="0-$((TILE_COUNT - 1))"
+
+MANIFEST_CSV="${RUN_ROOT}/manifest.csv"
+if [ ! -f "$MANIFEST_CSV" ]; then
+    echo "run_id,nd2_id,nd2_path,status_step1,status_step2,status_step3,status_step4,status_step5,submitted_at,nd2_root,tile_dir,pred_dir,postproc_dir,log_dir,checkpoint,template,tile_count" > "$MANIFEST_CSV"
+fi
+
+cat > "${META_DIR}/run_context.env" <<EOF_RUN
+RUN_ID=${RUN_ID}
+ND2_ID=${ND2_ID}
+ND2_PATH=${ND2_PATH}
+RUNS_ROOT=${RUNS_ROOT}
+RUN_ROOT=${RUN_ROOT}
+ND2_ROOT=${ND2_ROOT}
+INPUT_DIR=${INPUT_DIR}
+TILE_DIR=${TILE_DIR}
+PRED_DIR=${PRED_DIR}
+POSTPROC_BASE=${POSTPROC_BASE}
+POSTPROC_ND2_DIR=${POSTPROC_ND2_DIR}
+CACHE_DIR=${CACHE_DIR}
+LOG_DIR=${LOG_DIR}
+META_DIR=${META_DIR}
+QC_DIR=${QC_DIR}
+CKPT=${CKPT}
+TEMPLATE=${TEMPLATE}
+TILE_NAMES_FILE=${TILE_NAMES_FILE}
+TILE_COUNT=${TILE_COUNT}
+CELL_SEG_MODEL_TYPE=${CELL_SEG_MODEL_TYPE}
+FIBER_N_JOBS=${FIBER_N_JOBS}
+MAIL_USER=${MAIL_USER}
+EOF_RUN
+
+COMMON_EXPORT="ALL,RUN_ID=${RUN_ID},ND2_ID=${ND2_ID},ND2_PATH=${ND2_PATH},RUNS_ROOT=${RUNS_ROOT},RUN_ROOT=${RUN_ROOT},ND2_ROOT=${ND2_ROOT},INPUT_DIR=${INPUT_DIR},TILE_DIR=${TILE_DIR},PRED_DIR=${PRED_DIR},POSTPROC_BASE=${POSTPROC_BASE},POSTPROC_ND2_DIR=${POSTPROC_ND2_DIR},CACHE_DIR=${CACHE_DIR},LOG_DIR=${LOG_DIR},META_DIR=${META_DIR},QC_DIR=${QC_DIR},WORK_DIR=${WORK_DIR},CKPT=${CKPT},TEMPLATE=${TEMPLATE},TILE_NAMES_FILE=${TILE_NAMES_FILE},CELL_SEG_MODEL_TYPE=${CELL_SEG_MODEL_TYPE},FIBER_N_JOBS=${FIBER_N_JOBS},MAIL_USER=${MAIL_USER}"
+
+STEP1_STATUS="skipped"
+STEP2_STATUS="skipped"
+STEP3_STATUS="skipped"
+STEP4_STATUS="skipped"
+STEP5_STATUS="submitted"
+
+echo "================================================"
+echo "ND2 Full Fiber Pipeline Launcher"
+echo "================================================"
+echo "Launched:     $(date)"
+echo "run_id:       ${RUN_ID}"
+echo "nd2_id:       ${ND2_ID}"
+echo "nd2:          ${ND2_PATH}"
+echo "tile_count:   ${TILE_COUNT}"
+echo "tile_names:   $(paste -sd, "$TILE_NAMES_FILE")"
+echo "nd2_root:     ${ND2_ROOT}"
+echo "array_range:  ${ARRAY_RANGE}"
 echo ""
 
-# Combine per-tile intensity profile NPZs into one combined NPZ
-echo "Combining intensity profile NPZs..."
-python -u -c "
-import numpy as np, glob, sys
-files = sorted(glob.glob('${OUTPUT_DIR}/${ND2_BASENAME}_*_profiles.npz'))
-if not files:
-    print('  WARNING: No per-tile profile NPZs found'); sys.exit(0)
-all_fids, all_valid, all_tiles = [], [], []
-ch_profiles = {}
-for f in files:
-    d = np.load(f)
-    tile = f.rsplit('_profiles.npz', 1)[0].rsplit('_', 1)[-1]
-    n = len(d['fiber_ids'])
-    all_fids.append(d['fiber_ids'])
-    all_valid.append(d['is_valid'])
-    all_tiles.extend([tile] * n)
-    for k in d.files:
-        if k not in ('fiber_ids', 'is_valid'):
-            ch_profiles.setdefault(k, []).append(d[k])
-out = '${OUTPUT_DIR}/${ND2_BASENAME}_combined_profiles.npz'
-np.savez_compressed(out,
-    fiber_ids=np.concatenate(all_fids),
-    is_valid=np.concatenate(all_valid),
-    tile_names=np.array(all_tiles),
-    **{k: np.concatenate(v) for k, v in ch_profiles.items()})
-print(f'  Combined profiles: {out} ({sum(len(f) for f in all_fids)} fibers from {len(files)} tiles)')
-"
+STEP1_DEP=""
+STEP2_JOB=""
+STEP3_JOB=""
+STEP4_JOB=""
+STEP5_JOB=""
+
+if [ "$SKIP_STEP1" = false ]; then
+    STEP1_JOB=$(sbatch --parsable \
+        --chdir "$WORK_DIR" \
+        --export="${COMMON_EXPORT},EXTRACT_ALL_CHANNELS=true" \
+        --job-name="nd2_extract_${SAFE_ND2_ID}" \
+        --output "${LOG_DIR}/nd2_extract_%j.out" \
+        --error "${LOG_DIR}/nd2_extract_%j.err" \
+        slurm_jobs/step1_extract_tiles.sl)
+    STEP1_STATUS="submitted"
+    STEP1_DEP="--dependency=afterok:${STEP1_JOB}"
+    echo "Step 1 submitted: ${STEP1_JOB} (extract all channels)"
+else
+    echo "Step 1 skipped"
+fi
+
+if [ "$SKIP_STEP2" = false ]; then
+    STEP2_JOB=$(sbatch --parsable $STEP1_DEP \
+        --chdir "$WORK_DIR" \
+        --export="${COMMON_EXPORT}" \
+        --job-name="nd2_infer_${SAFE_ND2_ID}" \
+        --array="$ARRAY_RANGE" \
+        --output "${LOG_DIR}/nd2_infer_%A_%a.out" \
+        --error "${LOG_DIR}/nd2_infer_%A_%a.err" \
+        slurm_jobs/step2_infer_tiles_array.sl)
+    STEP2_STATUS="submitted"
+    echo "Step 2 submitted: ${STEP2_JOB}_[${ARRAY_RANGE}] (fiber inference array)"
+else
+    echo "Step 2 skipped"
+fi
+
+if [ "$SKIP_STEP3" = false ]; then
+    STEP3_JOB=$(sbatch --parsable $STEP1_DEP \
+        --chdir "$WORK_DIR" \
+        --export="${COMMON_EXPORT}" \
+        --job-name="nd2_cellseg_${SAFE_ND2_ID}" \
+        --array="$ARRAY_RANGE" \
+        --output "${LOG_DIR}/nd2_cellseg_%A_%a.out" \
+        --error "${LOG_DIR}/nd2_cellseg_%A_%a.err" \
+        slurm_jobs/step3_cell_seg_array.sl)
+    STEP3_STATUS="submitted"
+    echo "Step 3 submitted: ${STEP3_JOB}_[${ARRAY_RANGE}] (cell segmentation array)"
+else
+    echo "Step 3 skipped"
+fi
+
+STEP4_DEP=""
+STEP4_DEPS=()
+if [ -n "$STEP2_JOB" ]; then
+    STEP4_DEPS+=("$STEP2_JOB")
+fi
+if [ -n "$STEP3_JOB" ]; then
+    STEP4_DEPS+=("$STEP3_JOB")
+fi
+if [ "${#STEP4_DEPS[@]}" -gt 0 ]; then
+    STEP4_DEP="--dependency=afterok:$(IFS=:; echo "${STEP4_DEPS[*]}")"
+fi
+
+if [ "$SKIP_STEP4" = false ]; then
+    STEP4_JOB=$(sbatch --parsable $STEP4_DEP \
+        --chdir "$WORK_DIR" \
+        --export="${COMMON_EXPORT}" \
+        --job-name="nd2_fiber_${SAFE_ND2_ID}" \
+        --array="$ARRAY_RANGE" \
+        --output "${LOG_DIR}/nd2_fiber_%A_%a.out" \
+        --error "${LOG_DIR}/nd2_fiber_%A_%a.err" \
+        slurm_jobs/step4_fiber_array.sl)
+    STEP4_STATUS="submitted"
+    echo "Step 4 submitted: ${STEP4_JOB}_[${ARRAY_RANGE}] (fiber analysis array)"
+else
+    echo "Step 4 skipped"
+fi
+
+STEP5_DEP=""
+if [ -n "$STEP4_JOB" ]; then
+    STEP5_DEP="--dependency=afterok:${STEP4_JOB}"
+fi
+
+STEP5_JOB=$(sbatch --parsable $STEP5_DEP \
+    --chdir "$WORK_DIR" \
+    --export="${COMMON_EXPORT}" \
+    --job-name="nd2_merge_${SAFE_ND2_ID}" \
+    --output "${LOG_DIR}/nd2_merge_%j.out" \
+    --error "${LOG_DIR}/nd2_merge_%j.err" \
+    slurm_jobs/step5_merge_outputs.sl)
+
+if [ "$ONLY_MERGE" = true ]; then
+    echo "Only merge mode enabled"
+fi
+
+echo "${RUN_ID},${ND2_ID},${ND2_PATH},${STEP1_STATUS},${STEP2_STATUS},${STEP3_STATUS},${STEP4_STATUS},${STEP5_STATUS},$(date -Iseconds),${ND2_ROOT},${TILE_DIR},${PRED_DIR},${POSTPROC_ND2_DIR},${LOG_DIR},${CKPT},${TEMPLATE},${TILE_COUNT}" >> "$MANIFEST_CSV"
 
 echo ""
-
-# ============================================================================
-# Summary
-# ============================================================================
-echo "============================================================"
-echo "PIPELINE COMPLETE"
-echo "============================================================"
-echo "ND2 file:     ${ND2_FILE}"
-echo "ND2 name:     ${ND2_BASENAME}"
-echo "Tiles:        ${N_TILES} (${TILE_NAMES[*]})"
-echo "Output dir:   ${OUTPUT_DIR}"
-echo "Combined CSV: ${COMBINED_CSV}"
-echo "Profiles:     ${OUTPUT_DIR}/${ND2_BASENAME}_combined_profiles.npz"
-echo "End time:     $(date)"
-echo "============================================================"
+echo "================================================"
+echo "All jobs submitted"
+echo "================================================"
+echo "Step 1 job: ${STEP1_JOB:-N/A}"
+echo "Step 2 job: ${STEP2_JOB:-N/A}_[${ARRAY_RANGE}]"
+echo "Step 3 job: ${STEP3_JOB:-N/A}_[${ARRAY_RANGE}]"
+echo "Step 4 job: ${STEP4_JOB:-N/A}_[${ARRAY_RANGE}]"
+echo "Step 5 job: ${STEP5_JOB}"
+echo ""
+echo "Monitor:"
+echo "  squeue -u $USER"
+echo "  tail -f ${LOG_DIR}/nd2_merge_${STEP5_JOB}.out"
+echo ""
+echo "Paths:"
+echo "  run root:    ${RUN_ROOT}"
+echo "  nd2 root:    ${ND2_ROOT}"
+echo "  tiles:       ${TILE_DIR}"
+echo "  predictions: ${PRED_DIR}"
+echo "  postproc:    ${POSTPROC_ND2_DIR}"
+echo "  qc:          ${QC_DIR}"
+echo "  context:     ${META_DIR}/run_context.env"
+echo "================================================"

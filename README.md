@@ -1,304 +1,176 @@
-<a href="https://github.com/zudi-lin/pytorch_connectomics">
-<img src="./.github/logo_fullname.png" width="450"></a>
+# ND2 Pipeline (Current Production Version)
 
-<p align="left">
-    <a href="https://www.python.org/">
-      <img src="https://img.shields.io/badge/Python-3.8+-ff69b4.svg" /></a>
-    <a href= "https://pytorch.org/">
-      <img src="https://img.shields.io/badge/PyTorch-1.8+-2BAF2B.svg" /></a>
-    <a href= "https://lightning.ai/">
-      <img src="https://img.shields.io/badge/Lightning-2.0+-792EE5.svg" /></a>
-    <a href= "https://monai.io/">
-      <img src="https://img.shields.io/badge/MONAI-0.9+-00A3E0.svg" /></a>
-    <a href= "https://github.com/zudi-lin/pytorch_connectomics/blob/master/LICENSE">
-      <img src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
-    <a href= "https://zudi-lin.github.io/pytorch_connectomics/build/html/index.html">
-      <img src="https://img.shields.io/badge/Doc-Latest-2BAF2B.svg" /></a>
-    <a href= "https://join.slack.com/t/pytorchconnectomics/shared_invite/zt-obufj5d1-v5_NndNS5yog8vhxy4L12w">
-      <img src="https://img.shields.io/badge/Slack-Join-CC8899.svg" /></a>
-    <a href= "https://arxiv.org/abs/2112.05754">
-      <img src="https://img.shields.io/badge/arXiv-2112.05754-FF7F50.svg" /></a>
-</p>
+This document describes the **current SLURM ND2 pipeline** used in this repo:
 
----
+- `slurm_jobs/run_pipeline.sh` (single ND2 launcher)
+- `slurm_jobs/run_pipeline_batch.sh` (batch launcher for one ND2 directory)
+- `slurm_jobs/step1_extract_tiles.sl`
+- `slurm_jobs/step2_infer_tiles_array.sl`
+- `slurm_jobs/step3_postprocess.sl`
 
-## What is PyTorch Connectomics (PyTC)?
+## 1. What This Pipeline Does
 
-**Automatic segmentation of neural structures in electron microscopy images** 🔬🧠
+For each ND2 file, the pipeline runs:
 
-PyTorch Connectomics (PyTC) helps neuroscientists:
-- ✅ **Segment** mitochondria, synapses, and neurons in 3D EM volumes
-- ✅ **Train models** without deep ML expertise
-- ✅ **Process** large-scale connectomics datasets efficiently
+1. Step 1 (CPU): extract tiles from ND2
+2. Step 2 (GPU array): run tile-level model inference
+3. Step 3 (CPU): postprocess predictions and write fiber CSVs
 
-**Built on:** [PyTorch Lightning](https://lightning.ai/) + [MONAI](https://monai.io/) + [nnU-Net](https://github.com/MIC-DKFZ/nnUNet) for modern, scalable deep learning.
+Important:
 
----
+- Step 2 is **dynamic tile-count aware**.
+- Step 3 currently calls `generate_fiber_coordinates.py` (not `fiber_pipeline.py`).
+- By default, Step 3 deletes `tiles/` after success (`CLEANUP_TILES=true`).
 
-## Quick Start (5 Minutes)
+## 2. Key Dynamic Tile Behavior
 
-### 1. Install
+- Step 1 writes actual tile names to:
+  - `<nd2_root>/meta/tile_names.txt`
+- Step 2 is submitted as `--array=0-(N-1)` where `N = --max-array-tasks` (default 64).
+- Inside Step 2, tasks with index >= actual tile count exit successfully (no-op).
+- This supports ND2 files with different tile counts (for example: 4, 8, 12, 14, 23).
 
-Choose your preferred method:
+## 3. Output Layout
 
-<details open>
-<summary><b>🚀 One-Command Install (Recommended)</b></summary>
+Per ND2:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/zudi-lin/pytorch_connectomics/refs/heads/master/quickstart.sh | bash
-conda activate pytc
-```
+`<runs_root>/<run_id>/<nd2_id>/`
 
-Done! ✅
-</details>
+Subdirectories:
 
-<details>
-<summary><b>🐍 Python Script Install</b></summary>
+- `input/`: ND2 symlink
+- `tiles/`: extracted tile TIFFs + metadata JSON (may be deleted after Step 3)
+- `pred/`: model outputs (`*_ch1_prediction.tiff`, `*_ch1_prediction.h5`, optional TTA files)
+- `postproc/`: tile CSVs + `all_tiles_fiber_coordinates.csv`
+- `logs/`: SLURM logs
+- `meta/`: run metadata (`run_context.env`, step summaries, tile_names.txt)
+- `qc/`: quality check report (`check_report.json`)
+
+Run-level:
+
+- `<runs_root>/<run_id>/manifest.csv`
+
+## 4. Single ND2 Usage
 
 ```bash
-git clone https://github.com/zudi-lin/pytorch_connectomics.git
-cd pytorch_connectomics
-python install.py
-conda activate pytc
-```
-</details>
+cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
 
-<details>
-<summary><b>🛠️ Manual Install</b></summary>
+bash slurm_jobs/run_pipeline.sh \
+  --nd2 /absolute/path/to/file.nd2 \
+  --run-id 20260328_test_single
+```
+
+Required:
+
+- `--nd2 /absolute/path/to/file.nd2`
+
+Optional:
+
+- `--run-id <id>`
+- `--nd2-id <id>`
+- `--runs-root <dir>`
+- `--checkpoint <path>`
+- `--template <path>`
+- `--tile-names <csv>` (seed list; actual list is refreshed from extraction)
+- `--max-array-tasks <N>` (default 64)
+- `--skip-step1`
+- `--only-step3`
+
+## 5. Batch Usage (Directory of ND2 Files)
 
 ```bash
-conda create -n pytc python=3.10 -y
-conda activate pytc
-conda install -c conda-forge numpy h5py cython connected-components-3d -y
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-git clone https://github.com/zudi-lin/pytorch_connectomics.git
-cd pytorch_connectomics
-pip install -e . --no-build-isolation
+cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
+
+bash slurm_jobs/run_pipeline_batch.sh \
+  --nd2-dir /projects/weilab/dataset/barcode/2026/broad_dongqing \
+  --glob "*.nd2" \
+  --run-id 20260328_batch1 \
+  --runs-root /projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_runs \
+  --max-array-tasks 64
 ```
-</details>
 
-**📖 Detailed instructions:** [INSTALLATION.md](INSTALLATION.md) | **🚀 Quick start:** [QUICKSTART.md](QUICKSTART.md)
+Required:
 
----
+- `--nd2-dir <directory>`
 
-### 2. Run Demo
+Optional:
 
-Verify your installation with a 30-second demo:
+- `--glob <pattern>` (default `*.nd2`)
+- `--run-id <id>`
+- `--runs-root <dir>`
+- `--checkpoint <path>`
+- `--template <path>`
+- `--tile-names <csv>`
+- `--max-array-tasks <N>`
+- `--skip-step1`
+- `--only-step3`
+
+## 6. Monitoring
+
+Queue:
 
 ```bash
-python scripts/main.py --demo
+squeue -u $USER
 ```
 
-**Expected output:**
-```
-🎯 PyTorch Connectomics Demo Mode
-...
-✅ DEMO COMPLETED SUCCESSFULLY!
-```
+Accounting (replace IDs):
 
----
-
-### 3. Try a Tutorial
 ```bash
-# Download tutorial data (~50 MB)
-just download lucchi++
+sacct -j <jobid_or_arrayid> --format=JobID,JobName,State,ExitCode,Start,End
 ```
 
-#### 3.1 Run inference with a pretrained checkpoint (no training required):
+Live logs:
 
-- Ours: 0.913 Jaccard index (Foreground-IoU)
-- Prior art: 0.907 (systematic comparsions in [Casser et.al 20](https://arxiv.org/abs/1812.06024))
 ```bash
-# Download pretrained checkpoint
-mkdir -p checkpoints
-curl -L "https://huggingface.co/pytc/tutorial2.0/resolve/main/mito_lucchi%2B%2B_15k.ckpt?download=true" \
-  -o checkpoints/mito_lucchi_pp_15k.ckpt
-
-# Run inference
-just test mito_lucchi++ checkpoints/mito_lucchi_pp_15k.ckpt
+tail -f <nd2_root>/logs/nd2_extract_<jobid>.out
+tail -f <nd2_root>/logs/nd2_infer_<array_jobid>_0.out
+tail -f <nd2_root>/logs/nd2_postproc_<jobid>.out
 ```
 
-#### 3.2 Train from scratch
-- current settings: num_gpus=4, num_cpus=8, batch_size=16
-- change settings in [tutorials/mito_lucchi++.yaml](https://github.com/PytorchConnectomics/pytorch_connectomics/blob/master/tutorials/mito_lucchi%2B%2B.yaml#L6)
+## 7. Completion Criteria (Recommended)
+
+An ND2 is considered successful when:
+
+- Step 1/2/3 states are all `COMPLETED`
+- `<nd2_root>/postproc/all_tiles_fiber_coordinates.csv` exists
+- `<nd2_root>/meta/step3_postproc_summary.txt` contains `master_csv_exists=True`
+
+Quick check example:
+
 ```bash
-# Quick test (1 batch)
-just train mito_lucchi++ --fast-dev-run
-
-# Full training
-just train mito_lucchi++
+run_root=/path/to/fiber_runs/<run_id>
+for d in "$run_root"/*; do
+  [ -d "$d" ] || continue
+  nd2=$(basename "$d")
+  if [ -f "$d/postproc/all_tiles_fiber_coordinates.csv" ]; then
+    echo "$nd2: OK"
+  else
+    echo "$nd2: MISSING_MASTER_CSV"
+  fi
+done
 ```
 
-**Monitor progress:**
+## 8. Cleanup Behavior
+
+Default:
+
+- Step 3 runs with `CLEANUP_TILES=true`.
+- After successful postprocess, `tiles/` is deleted to save disk.
+
+If you want to keep tiles:
+
 ```bash
-just tensorboard lucchi++
+CLEANUP_TILES=false bash slurm_jobs/run_pipeline.sh --nd2 /path/to/file.nd2
 ```
 
-**Run inference from your trained checkpoint:**
+Or for batch:
+
 ```bash
-just test lucchi++ outputs/lucchi++/$EXPERIMENT_DATE/checkpoints/best.ckpt
-```
----
-
-## Key Features
-
-### 🚀 Modern Architecture (v2.0)
-- **PyTorch Lightning:** Automatic distributed training, mixed precision, callbacks
-- **MONAI:** Medical imaging models, transforms, losses optimized for 3D volumes
-- **Hydra/OmegaConf:** Type-safe configurations with CLI overrides
-- **Extensible:** Easy to add custom models, losses, and transforms
-
-### 🏗️ State-of-the-Art Models
-- **MONAI Models:** BasicUNet3D, UNet, UNETR, Swin UNETR
-- **MedNeXt (MICCAI 2023):** ConvNeXt-based architecture for medical imaging
-- **Custom Models:** Easily integrate your own architectures
-
-### ⚡ Performance
-- **Distributed Training:** Automatic multi-GPU with DDP
-- **Mixed Precision:** FP16/BF16 training for 2x speedup
-- **Efficient Data Loading:** Pre-loaded caching, MONAI transforms
-- **Gradient Accumulation:** Train with large effective batch sizes
-
-### 📊 Monitoring & Logging
-- **TensorBoard:** Training curves, images, metrics
-- **Weights & Biases:** Experiment tracking (optional)
-- **Early Stopping:** Automatic stopping when training plateaus
-- **Checkpointing:** Save best models automatically
-
----
-
-## Documentation
-
-- 🚀 **[Quick Start Guide](QUICKSTART.md)** - Get running in 5 minutes
-- 📦 **[Installation Guide](INSTALLATION.md)** - Detailed setup instructions
-- 📚 **[Full Documentation](https://connectomics.readthedocs.io)** - Complete reference
-- 🎯 **[Tutorials](tutorials/)** - Example configurations
-- 🔧 **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
-- 👨‍💻 **[Developer Guide](.claude/CLAUDE.md)** - Contributing and architecture
-
----
-
-## Example: Train a Model
-
-Create a config file (`my_config.yaml`):
-
-```yaml
-system:
-  training:
-    num_gpus: 1
-    num_cpus: 4
-    batch_size: 2
-
-model:
-  architecture: monai_basic_unet3d
-  in_channels: 1
-  out_channels: 2
-  loss_functions: [DiceLoss]
-
-data:
-  train_image: "path/to/train_image.h5"
-  train_label: "path/to/train_label.h5"
-  patch_size: [128, 128, 128]
-
-optimization:
-  max_epochs: 100
-  precision: "16-mixed"  # Mixed precision for speed
-
-optimizer:
-  name: AdamW
-  lr: 1e-4
+CLEANUP_TILES=false bash slurm_jobs/run_pipeline_batch.sh --nd2-dir /path/to/nd2_dir
 ```
 
-Train:
-```bash
-python scripts/main.py --config my_config.yaml
-```
+## 9. Notes and Scope
 
-Override from CLI:
-```bash
-python scripts/main.py --config my_config.yaml data.batch_size=4 optimization.max_epochs=200
-```
-
----
-
-## Supported Models
-
-### MONAI Models
-- **BasicUNet3D** - Fast, simple 3D U-Net (recommended for beginners)
-- **UNet** - U-Net with residual units
-- **UNETR** - Transformer-based architecture
-- **Swin UNETR** - Swin Transformer U-Net
-
-### MedNeXt Models (MICCAI 2023)
-- **MedNeXt-S** - 5.6M parameters (fast)
-- **MedNeXt-B** - 10.5M parameters (balanced)
-- **MedNeXt-M** - 17.6M parameters (accurate)
-- **MedNeXt-L** - 61.8M parameters (state-of-the-art)
-
-**See:** [.claude/MEDNEXT.md](.claude/MEDNEXT.md) for MedNeXt integration guide
-
----
-
-## Data Formats
-
-- **HDF5** (.h5) - Primary format (recommended)
-- **TIFF** (.tif, .tiff) - Multi-page TIFF stacks
-- **Zarr** - For large-scale datasets
-- **NumPy** - Direct array loading
-
-**Input shape:** `(batch, channels, depth, height, width)`
-
----
-
-## Community & Support
-
-- 💬 **Slack:** [Join our community](https://join.slack.com/t/pytorchconnectomics/shared_invite/zt-obufj5d1-v5_NndNS5yog8vhxy4L12w) (friendly and helpful!)
-- 🐛 **Issues:** [GitHub Issues](https://github.com/zudi-lin/pytorch_connectomics/issues)
-- 📧 **Contact:** See lab website
-- 📄 **Paper:** [arXiv:2112.05754](https://arxiv.org/abs/2112.05754)
-
----
-
-## Citation
-
-If PyTorch Connectomics helps your research, please cite:
-
-```bibtex
-@article{lin2021pytorch,
-  title={PyTorch Connectomics: A Scalable and Flexible Segmentation Framework for EM Connectomics},
-  author={Lin, Zudi and Wei, Donglai and Lichtman, Jeff and Pfister, Hanspeter},
-  journal={arXiv preprint arXiv:2112.05754},
-  year={2021}
-}
-```
-
----
-
-## Acknowledgements
-
-**Powered by:**
-- [PyTorch Lightning](https://lightning.ai/) - Lightning AI Team
-- [MONAI](https://monai.io/) - MONAI Consortium
-- [MedNeXt](https://github.com/MIC-DKFZ/MedNeXt) - DKFZ Medical Image Computing
-
-**Supported by:**
-- NSF awards IIS-1835231, IIS-2124179, IIS-2239688
-
----
-
-## License
-
-**MIT License** - See [LICENSE](LICENSE) for details.
-
-Copyright © PyTorch Connectomics Contributors
-
----
-
-## Version History
-
-- **v2.0** (2025) - Complete rewrite with PyTorch Lightning + MONAI
-- **v1.0** (2021) - Initial release
-
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for detailed release notes.
-
----
+- This README describes the **SLURM ND2 inference/postprocess pipeline** only.
+- `fiber_pipeline.py` is a separate analysis pipeline and is not called by current Step 3.
+- For large batches, keep a unique `run_id` per submission and avoid reusing old `run_id` unless you intentionally overwrite/retry within the same run namespace.

@@ -47,6 +47,7 @@ POSTPROC_DIR="${POSTPROC_DIR:-fiber_analysis/nd2_all_tiles}"
 QC_DIR="${QC_DIR:-${WORK_DIR}/qc}"
 META_DIR="${META_DIR:-${WORK_DIR}/meta}"
 TILE_NAMES_FILE="${TILE_NAMES_FILE:-}"
+CLEANUP_TILES="${CLEANUP_TILES:-true}"
 
 cd "$WORK_DIR"
 mkdir -p "$POSTPROC_DIR" "$QC_DIR" "$META_DIR"
@@ -133,6 +134,17 @@ with open(meta_dir / "step3_postproc_summary.txt", "w") as f:
     for k, v in report.items():
         f.write(f"{k}={v}\n")
 PY
+
+if [ "$CLEANUP_TILES" = "true" ]; then
+    if [ -n "${TILE_DIR}" ] && [ "${TILE_DIR}" != "/" ]; then
+        echo ""
+        echo "Cleaning up tiles to save disk space..."
+        rm -rf "${TILE_DIR}"
+        echo "  Deleted: ${TILE_DIR}"
+    else
+        echo "WARNING: skip tile cleanup due to unsafe TILE_DIR='${TILE_DIR}'"
+    fi
+fi
 
 echo ""
 echo "============================================"

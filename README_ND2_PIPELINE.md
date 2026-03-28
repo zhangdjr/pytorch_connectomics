@@ -1,70 +1,63 @@
-# ND2 Pipeline README
+# ND2 Pipeline (Current Production Version)
 
-This document describes the production-style ND2 inference pipeline based on:
+This document describes the **current SLURM ND2 pipeline** used in this repo:
 
 - `slurm_jobs/run_pipeline.sh` (single ND2 launcher)
-- `slurm_jobs/run_pipeline_batch.sh` (batch launcher for a directory of ND2 files)
+- `slurm_jobs/run_pipeline_batch.sh` (batch launcher for one ND2 directory)
+- `slurm_jobs/step1_extract_tiles.sl`
+- `slurm_jobs/step2_infer_tiles_array.sl`
+- `slurm_jobs/step3_postprocess.sl`
 
-The pipeline runs 3 stages per ND2:
+## 1. What This Pipeline Does
 
-1. Extract tiles from ND2
-2. Run tile-level inference (SLURM array)
-3. Run post-processing and generate CSV outputs
+For each ND2 file, the pipeline runs:
 
----
+1. Step 1 (CPU): extract tiles from ND2
+2. Step 2 (GPU array): run tile-level model inference
+3. Step 3 (CPU): postprocess predictions and write fiber CSVs
 
-## 1. Key Concepts
+Important:
 
-### `run_id`
-Batch namespace. All ND2 jobs in the same batch can share one `run_id`.
+- Step 2 is **dynamic tile-count aware**.
+- Step 3 currently calls `generate_fiber_coordinates.py` (not `fiber_pipeline.py`).
+- By default, Step 3 deletes `tiles/` after success (`CLEANUP_TILES=true`).
 
-Default behavior:
-- If `--run-id` is not provided, it is auto-generated as `YYYYMMDD_HHMMSS`.
+## 2. Key Dynamic Tile Behavior
 
-### `nd2_id`
-File namespace under one `run_id`.
+- Step 1 writes actual tile names to:
+  - `<nd2_root>/meta/tile_names.txt`
+- Step 2 is submitted as `--array=0-(N-1)` where `N = --max-array-tasks` (default 64).
+- Inside Step 2, tasks with index >= actual tile count exit successfully (no-op).
+- This supports ND2 files with different tile counts (for example: 4, 8, 12, 14, 23).
 
-Default behavior:
-- If `--nd2-id` is not provided, it uses ND2 filename stem.
+## 3. Output Layout
 
----
-
-## 2. Output Layout
-
-For each ND2:
+Per ND2:
 
 `<runs_root>/<run_id>/<nd2_id>/`
 
 Subdirectories:
 
-- `input/`     ND2 symlink
-- `tiles/`     extracted tile TIFFs + metadata JSON
-- `pred/`      prediction outputs (`*_prediction.h5`, `*_prediction.tiff`)
-- `postproc/`  per-tile CSVs + `all_tiles_fiber_coordinates.csv`
-- `logs/`      SLURM logs for extract/infer/postproc
-- `meta/`      run metadata (`run_context.env`, summaries)
-- `qc/`        quality check report (`check_report.json`)
+- `input/`: ND2 symlink
+- `tiles/`: extracted tile TIFFs + metadata JSON (may be deleted after Step 3)
+- `pred/`: model outputs (`*_ch1_prediction.tiff`, `*_ch1_prediction.h5`, optional TTA files)
+- `postproc/`: tile CSVs + `all_tiles_fiber_coordinates.csv`
+- `logs/`: SLURM logs
+- `meta/`: run metadata (`run_context.env`, step summaries, tile_names.txt)
+- `qc/`: quality check report (`check_report.json`)
 
-Run-level file:
+Run-level:
 
 - `<runs_root>/<run_id>/manifest.csv`
 
-Default `runs_root`:
-
-- `/projects/weilab/dataset/barcode/2026/umich/fiber_runs`
-
----
-
-## 3. Single ND2 Usage
-
-From repo root:
+## 4. Single ND2 Usage
 
 ```bash
 cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
 
 bash slurm_jobs/run_pipeline.sh \
-  --nd2 /projects/weilab/dataset/barcode/2026/umich/A1-2003.nd2 \
-  --run-id 20260325_prod_v1
+  --nd2 /absolute/path/to/file.nd2 \
+  --run-id 20260328_test_single
 ```
 
 Required:
@@ -78,23 +71,22 @@ Optional:
 - `--runs-root <dir>`
 - `--checkpoint <path>`
 - `--template <path>`
-- `--tile-names A1,A2,A3,B4,B3,B2,B1,C1,C2,C3,D2,D1,E1`
+- `--tile-names <csv>` (seed list; actual list is refreshed from extraction)
+- `--max-array-tasks <N>` (default 64)
 - `--skip-step1`
 - `--only-step3`
 
----
-
-## 4. Batch Usage (`--nd2-dir`)
-
-Submit all ND2 files in one directory with a shared `run_id`:
+## 5. Batch Usage (Directory of ND2 Files)
 
 ```bash
 cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
 
 bash slurm_jobs/run_pipeline_batch.sh \
-  --nd2-dir /projects/weilab/dataset/barcode/2026/umich \
+  --nd2-dir /projects/weilab/dataset/barcode/2026/broad_dongqing \
   --glob "*.nd2" \
-  --run-id 20260325_batch1
+  --run-id 20260328_batch1 \
+  --runs-root /projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_runs \
+  --max-array-tasks 64
 ```
 
 Required:
@@ -103,26 +95,31 @@ Required:
 
 Optional:
 
-- `--glob <pattern>` (default: `*.nd2`)
-- `--run-id <id>` (shared across the batch)
+- `--glob <pattern>` (default `*.nd2`)
+- `--run-id <id>`
 - `--runs-root <dir>`
 - `--checkpoint <path>`
 - `--template <path>`
 - `--tile-names <csv>`
+- `--max-array-tasks <N>`
 - `--skip-step1`
 - `--only-step3`
 
----
+## 6. Monitoring
 
-## 5. Monitoring
-
-Check queue:
+Queue:
 
 ```bash
 squeue -u $USER
 ```
 
-Tail logs (paths are printed by `run_pipeline.sh` on submission):
+Accounting (replace IDs):
+
+```bash
+sacct -j <jobid_or_arrayid> --format=JobID,JobName,State,ExitCode,Start,End
+```
+
+Live logs:
 
 ```bash
 tail -f <nd2_root>/logs/nd2_extract_<jobid>.out
@@ -130,12 +127,50 @@ tail -f <nd2_root>/logs/nd2_infer_<array_jobid>_0.out
 tail -f <nd2_root>/logs/nd2_postproc_<jobid>.out
 ```
 
----
+## 7. Completion Criteria (Recommended)
 
-## 6. Notes
+An ND2 is considered successful when:
 
-- The pipeline is now isolated per ND2 to avoid cross-file cache/output collisions.
-- Step 2 writes predictions into per-ND2 `pred/` via `test.data.output_path`.
-- Step 3 validates prediction TIFF presence before post-processing.
-- `manifest.csv` is append-only submission metadata for batch tracking.
+- Step 1/2/3 states are all `COMPLETED`
+- `<nd2_root>/postproc/all_tiles_fiber_coordinates.csv` exists
+- `<nd2_root>/meta/step3_postproc_summary.txt` contains `master_csv_exists=True`
 
+Quick check example:
+
+```bash
+run_root=/path/to/fiber_runs/<run_id>
+for d in "$run_root"/*; do
+  [ -d "$d" ] || continue
+  nd2=$(basename "$d")
+  if [ -f "$d/postproc/all_tiles_fiber_coordinates.csv" ]; then
+    echo "$nd2: OK"
+  else
+    echo "$nd2: MISSING_MASTER_CSV"
+  fi
+done
+```
+
+## 8. Cleanup Behavior
+
+Default:
+
+- Step 3 runs with `CLEANUP_TILES=true`.
+- After successful postprocess, `tiles/` is deleted to save disk.
+
+If you want to keep tiles:
+
+```bash
+CLEANUP_TILES=false bash slurm_jobs/run_pipeline.sh --nd2 /path/to/file.nd2
+```
+
+Or for batch:
+
+```bash
+CLEANUP_TILES=false bash slurm_jobs/run_pipeline_batch.sh --nd2-dir /path/to/nd2_dir
+```
+
+## 9. Notes and Scope
+
+- This README describes the **SLURM ND2 inference/postprocess pipeline** only.
+- `fiber_pipeline.py` is a separate analysis pipeline and is not called by current Step 3.
+- For large batches, keep a unique `run_id` per submission and avoid reusing old `run_id` unless you intentionally overwrite/retry within the same run namespace.

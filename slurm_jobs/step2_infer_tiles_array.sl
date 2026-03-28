@@ -9,24 +9,29 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --mem=48G
 #SBATCH --time=02:00:00
-#SBATCH --array=0-12              # can be overridden by sbatch --array
+#SBATCH --array=0-63              # can be overridden by sbatch --array
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=liupen@bc.edu
 
 set -euo pipefail
 
-# ── Tile index → name + file ─────────────────────────────────────────────────
+# -- Tile index -> name + file ------------------------------------------------
 TILE_NAMES_FILE="${TILE_NAMES_FILE:-}"
 if [ -n "$TILE_NAMES_FILE" ] && [ -f "$TILE_NAMES_FILE" ]; then
-    mapfile -t TILE_NAMES < "$TILE_NAMES_FILE"
+    mapfile -t TILE_NAMES < <(sed '/^[[:space:]]*$/d' "$TILE_NAMES_FILE")
 else
     TILE_NAMES=(A1 A2 A3 B4 B3 B2 B1 C1 C2 C3 D2 D1 E1)
 fi
 TOTAL_TASKS="${#TILE_NAMES[@]}"
 
-if [ "${SLURM_ARRAY_TASK_ID}" -ge "${TOTAL_TASKS}" ]; then
-    echo "ERROR: array task id ${SLURM_ARRAY_TASK_ID} out of range for ${TOTAL_TASKS} tiles"
+if [ "${TOTAL_TASKS}" -le 0 ]; then
+    echo "ERROR: No tile names available (TILE_NAMES_FILE='${TILE_NAMES_FILE}')"
     exit 1
+fi
+
+if [ "${SLURM_ARRAY_TASK_ID}" -ge "${TOTAL_TASKS}" ]; then
+    echo "No tile mapped for array task ${SLURM_ARRAY_TASK_ID}; total tiles=${TOTAL_TASKS}. Exiting successfully."
+    exit 0
 fi
 
 TILE_NAME="${TILE_NAMES[$SLURM_ARRAY_TASK_ID]}"
@@ -35,9 +40,12 @@ ND2_ID="${ND2_ID:-unknown_nd2}"
 TILE_DIR="${TILE_DIR:-/projects/weilab/dataset/barcode/2026/umich/nd2_tiles}"
 PRED_DIR="${PRED_DIR:-last/results}"
 TILE_FILE="${TILE_DIR}/${TILE_NAME}_ch1.tif"
+WORK_DIR="${WORK_DIR:-/projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics}"
+SKIP_EMPTY_PATCHES="${SKIP_EMPTY_PATCHES:-true}"
+EMPTY_THRESHOLD="${EMPTY_THRESHOLD:-0.02}"
 
 echo "============================================"
-echo "Step 2: Inference — Tile ${TILE_NAME}  (task ${SLURM_ARRAY_TASK_ID}/$((TOTAL_TASKS - 1)))"
+echo "Step 2: Inference - Tile ${TILE_NAME}  (task ${SLURM_ARRAY_TASK_ID}/$((TOTAL_TASKS - 1)))"
 echo "============================================"
 echo "Job ID:  $SLURM_JOB_ID  Array: $SLURM_ARRAY_JOB_ID"
 echo "Node:    $SLURM_NODELIST"
@@ -64,11 +72,10 @@ if ! command -v conda >/dev/null 2>&1; then
 fi
 conda activate pytc
 
-export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:/home/zhangdjr/projects/umich-fiber/pytorch_connectomics:${PYTHONPATH:-}
+export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:${WORK_DIR}:${PYTHONPATH:-}
 # Enable Tensor Core utilization (L40S / A100)
 export TORCH_MATMUL_PRECISION=high
 
-WORK_DIR="${WORK_DIR:-/projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics}"
 CKPT="${CKPT:-checkpoints/last.ckpt}"
 TEMPLATE="${TEMPLATE:-tutorials/fiber_nd2_single_tile.yaml}"
 
@@ -85,7 +92,12 @@ if [ ! -f "$CKPT" ]; then
     exit 1
 fi
 
-# ── Generate per-tile YAML (swap test_image path) ────────────────────────────
+if [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.h5" ] && [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.tiff" ]; then
+    echo "Predictions already exist for ${TILE_NAME}; skipping inference."
+    exit 0
+fi
+
+# -- Generate per-tile YAML (swap test_image path) ----------------------------
 TILE_YAML="tutorials/fiber_nd2_tile_${ND2_ID}_${TILE_NAME}_${SLURM_JOB_ID}.yaml"
 export TILE_FILE TILE_YAML TILE_NAME ND2_ID PRED_DIR TEMPLATE
 python - <<'PY'
@@ -118,13 +130,18 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# ── Run inference ─────────────────────────────────────────────────────────────
-python -u scripts/main.py \
-    --config "$TILE_YAML" \
-    --mode test \
-    --checkpoint "$CKPT" \
-    --skip-empty-patches \
-    --empty-threshold 0.02
+# -- Run inference -------------------------------------------------------------
+cmd=(
+    python -u scripts/main.py
+    --config "$TILE_YAML"
+    --mode test
+    --checkpoint "$CKPT"
+)
+if [ "$SKIP_EMPTY_PATCHES" = true ]; then
+    cmd+=(--skip-empty-patches --empty-threshold "$EMPTY_THRESHOLD")
+fi
+
+"${cmd[@]}"
 
 EXIT_CODE=$?
 
