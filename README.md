@@ -79,7 +79,7 @@ Each row is one detected fiber. Filter by `is_valid == True` for high-quality me
 | `fiber_id` | Unique ID for each fiber |
 | `nd2_name` | Source ND2 file name |
 | `tile_name` | Which tile (e.g., A1, B5) |
-| `is_valid` | `True` if passed quality filters |
+| `is_valid` | `True` if passed quality filters (see below) |
 | `parent_cell_id` | Which cell body it belongs to (0 = none found) |
 | `fiber_length_um` | Length in micrometers |
 | `pca_linearity` | How straight (1.0 = perfectly straight) |
@@ -87,6 +87,15 @@ Each row is one detected fiber. Filter by `is_valid == True` for high-quality me
 | `centroid_y_um` | Fiber midpoint Y (µm) |
 | `centroid_x_um` | Fiber midpoint X (µm) |
 | `mean_soma_dapi` | DAPI brightness at the cell body |
+
+### How `is_valid` is determined
+
+The segmentation model detects every bright object in the volume, including tiny fragments, debris, and fiber cross-sections that aren't useful for analysis. The pipeline applies these filters in order to separate real, analyzable fibers from noise:
+
+1. **Divergent spline** — The pipeline fits a 3D spline to each fiber's skeleton. If the spline diverges (Z span of the core centerline > 3× the physical Z depth of the volume), the fiber is rejected. This catches rare cases where the PCA-based spline fitting produces physically impossible coordinates.
+2. **Too short (< 8 µm)** — Segments shorter than 8 µm are too small to extract a meaningful intensity profile. These are typically fiber tips barely entering the volume, perpendicular cross-sections, or autofluorescence blobs.
+
+In practice, ~65% of detected segments are rejected as too short and <1% are rejected as divergent. The remaining ~35% are marked `is_valid = True`.
 
 ---
 
