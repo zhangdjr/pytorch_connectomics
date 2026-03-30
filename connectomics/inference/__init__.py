@@ -10,6 +10,7 @@ from .io import (
 )
 from .sliding import build_sliding_inferer, resolve_inferer_roi_size, resolve_inferer_overlap
 from .tta import TTAPredictor
+from .masked_forward import EmptyPatchSkipWrapper
 
 __all__ = [
     "InferenceManager",
@@ -22,4 +23,5 @@ __all__ = [
     "resolve_inferer_roi_size",
     "resolve_inferer_overlap",
     "TTAPredictor",
+    "EmptyPatchSkipWrapper",
 ]

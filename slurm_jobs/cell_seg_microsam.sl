@@ -21,7 +21,7 @@ source ~/.bashrc
 conda activate microsam
 
 # Run on all 13 tiles (skips any that are already cached)
-python cell_seg_microsam.py --tile all --model_type vit_b_lm
+python tools/cell_seg_microsam.py --tile all --model_type vit_b_lm
 
 echo ""
 echo "End time: $(date)"

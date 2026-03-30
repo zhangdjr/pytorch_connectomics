@@ -111,6 +111,22 @@ def parse_args():
         default=None,
         help="Prefix to strip from external checkpoint keys (e.g., 'model.' for BANIS checkpoints)",
     )
+    parser.add_argument(
+        "--skip-empty-patches",
+        action="store_true",
+        dest="skip_empty_patches",
+        help=(
+            "Skip sliding-window patches that are mostly empty (useful for stitched "
+            "multi-tile volumes with large background regions). Saves ~30%% compute."
+        ),
+    )
+    parser.add_argument(
+        "--empty-threshold",
+        type=float,
+        default=0.02,
+        dest="empty_threshold",
+        help="Intensity threshold below which a patch is treated as empty (default: 0.02)",
+    )
     # Parameter tuning arguments
     parser.add_argument(
         "--params",

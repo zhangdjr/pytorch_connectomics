@@ -8,7 +8,7 @@ Post-process fiber segmentation predictions from all ND2 tiles:
   5. Generate per-tile CSVs and a combined master CSV
 
 Usage:
-    python generate_fiber_coordinates.py \
+    python tools/generate_fiber_coordinates.py \
         --pred_dir outputs/fiber_retrain_all/20260311_223801/results \
         --meta_dir /projects/weilab/dataset/barcode/2026/umich/nd2_tiles \
         --output_dir fiber_analysis/nd2_all_tiles

@@ -10,7 +10,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=11:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=zhangdjr@bc.edu
+#SBATCH --mail-user=liupen@bc.edu
 
 # Full pipeline: Extract all 13 tiles from ND2 → Run inference on all tiles
 
@@ -22,16 +22,18 @@ echo "Node: $SLURM_NODELIST"
 echo "Start time: $(date)"
 echo ""
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORK_DIR="${WORK_DIR:-${REPO_DIR}}"
+
 source ~/.bashrc
 conda activate pytc
 
-export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:/home/zhangdjr/projects/umich-fiber/pytorch_connectomics:$PYTHONPATH
-
-WORK_DIR="/home/zhangdjr/projects/umich-fiber/pytorch_connectomics"
+export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:${WORK_DIR}:${PYTHONPATH:-}
 CONFIG="tutorials/fiber_nd2_all_tiles.yaml"
 CKPT="outputs/fiber_retrain_all/20260311_223801/checkpoints/last.ckpt"
 
-cd $WORK_DIR
+cd "$WORK_DIR"
 
 # =============================================
 # Step 1: Extract all 13 tiles from ND2
@@ -39,7 +41,7 @@ cd $WORK_DIR
 echo "Step 1: Extracting all 13 tiles from ND2..."
 echo ""
 
-python -u extract_nd2_tile.py
+python -u tools/extract_nd2_tile.py
 
 if [ $? -ne 0 ]; then
     echo "ERROR: Extraction failed!"
@@ -83,7 +85,7 @@ echo ""
 echo "Step 3: Generating fiber coordinate CSVs..."
 echo ""
 
-python -u generate_fiber_coordinates.py \
+python -u tools/generate_fiber_coordinates.py \
     --pred_dir outputs/fiber_retrain_all/20260311_223801/results \
     --meta_dir /projects/weilab/dataset/barcode/2026/umich/nd2_tiles \
     --output_dir fiber_analysis/nd2_all_tiles

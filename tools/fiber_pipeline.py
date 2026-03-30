@@ -13,8 +13,8 @@ Channel mapping (A1-2003.nd2, standard ordering):
   Ch3: 647nm — timestamp (symmetric, used for midpoint detection)
 
 Usage:
-    python fiber_pipeline.py --tile A1 --nd2-name A1-2003
-    python fiber_pipeline.py --tile A1 --nd2-name A1-2003 --steps cell_seg,skeletonize,extract,normalize,validate,csv
+    python tools/fiber_pipeline.py --tile A1 --nd2-name A1-2003
+    python tools/fiber_pipeline.py --tile A1 --nd2-name A1-2003 --steps cell_seg,skeletonize,extract,normalize,validate,csv
 """
 
 import os
@@ -114,7 +114,7 @@ def load_cell_segmentation(output_path):
             f"Cell segmentation not found: {output_path}\n"
             f"Run cell_seg_microsam.py in the 'microsam' conda env first:\n"
             f"  conda activate microsam\n"
-            f"  python cell_seg_microsam.py --tile <TILE>"
+            f"  python tools/cell_seg_microsam.py --tile <TILE>"
         )
 
     cell_seg = np.load(output_path)["cell_seg"]
@@ -212,11 +212,11 @@ def skeletonize_single_fiber(fiber_mask_crop, bbox, anisotropy_nm, skel_cfg):
             spline_smoothing=skel_cfg["spline_smoothing"],
         )
 
-        # Compute physical arc length from non-extrapolated core [0, 1]
+        # Compute physical arc length from non-extrapolated core [0, 1].
         core_pts = spline_fn(np.linspace(0, 1, 200))
         total_length_nm = np.sum(np.linalg.norm(np.diff(core_pts, axis=0), axis=1))
 
-        # Sanity check: reject divergent spline fits (no fiber > 500 µm in a single tile)
+        # Sanity check: reject divergent spline fits (no fiber > 500 um in one tile).
         if total_length_nm > 500_000:
             return None, 0
 
@@ -301,12 +301,10 @@ def run_signal_extraction(skeletons, raw_channels, cell_seg, fiber_seg, config):
 
     # Collect all skeleton points into one big array for batched interpn
     fid_list = list(skeletons.keys())
-    
-    # Handle empty skeleton case
     if not fid_list:
         print("  No skeletons found - skipping signal extraction")
         return skeletons
-    
+
     all_centerlines = [skeletons[fid]["centerline"] for fid in fid_list]
     n_pts_per_fiber = [len(cl) for cl in all_centerlines]
     all_points = np.concatenate(all_centerlines, axis=0)  # (N_total, 3) in nm
@@ -540,7 +538,7 @@ def validate_fibers(normalized, config):
     val_cfg = config["validate"]
     aniso = config["anisotropy_nm"]
     nm_per_um = 1000.0
-    fiber_seg_nz = config.get("_fiber_seg_nz", 54)  # fallback to typical Z depth
+    fiber_seg_nz = config.get("_fiber_seg_nz", 54)
 
     valid = {}
     stats = {"total": len(normalized), "short": 0, "low_pca": 0, "no_soma": 0, "divergent": 0}
@@ -548,15 +546,21 @@ def validate_fibers(normalized, config):
     for fid, data in normalized.items():
         centerline = data["centerline"]
 
-        # Fiber length in µm — recompute from original centerline core [0,1]
+        # Fiber length in um: recompute from original centerline core [0,1].
         cl_orig = data.get("centerline_original", centerline)
         ext = config["skeleton"]["extrapolate"]
         n = len(cl_orig)
         total_range = ext[1] - ext[0]
+        if total_range <= 0:
+            total_range = 1.0
         core_start = int(round((0 - ext[0]) / total_range * n))
         core_end = int(round((1 - ext[0]) / total_range * n))
+        core_start = max(0, min(n, core_start))
+        core_end = max(core_start + 1, min(n, core_end))
         core = cl_orig[core_start:core_end]
-        length_nm = np.sum(np.linalg.norm(np.diff(core, axis=0), axis=1))
+        if len(core) < 2:
+            core = cl_orig
+        length_nm = np.sum(np.linalg.norm(np.diff(core, axis=0), axis=1)) if len(core) > 1 else 0.0
         length_um = length_nm / nm_per_um
 
         # PCA linearity
@@ -578,10 +582,9 @@ def validate_fibers(normalized, config):
         dapi_ch_name = config["channel_names"][config["dapi_channel"]]
         mean_soma = np.mean(data["signals"].get(dapi_ch_name, np.array([0])))
 
-        # Divergent spline check: Z span of core centerline must be
-        # physically plausible (< 3× the volume Z depth)
-        z_span_um = (core[:, 0].max() - core[:, 0].min()) / nm_per_um
-        max_z_um = aniso[0] / nm_per_um * fiber_seg_nz * 3  # 3× physical Z
+        # Divergent spline check: Z span of core centerline must be physically plausible.
+        z_span_um = (core[:, 0].max() - core[:, 0].min()) / nm_per_um if len(core) > 0 else 0.0
+        max_z_um = aniso[0] / nm_per_um * fiber_seg_nz * 3
 
         # Apply filters
         if z_span_um > max_z_um:
@@ -674,6 +677,16 @@ def export_csv(validated, nd2_name, tile_name, output_dir, config):
             "centroid_y_um": round(centroid_y, 2),
             "centroid_x_um": round(centroid_x, 2),
         }
+
+        # Per-channel summary stats
+        for ch_idx, ch_name in ch_names.items():
+            if ch_name in signals:
+                sig = signals[ch_name]
+                row[f"{ch_name}_mean"] = round(float(np.mean(sig)), 2)
+                row[f"{ch_name}_median"] = round(float(np.median(sig)), 2)
+                row[f"{ch_name}_min"] = round(float(np.min(sig)), 2)
+                row[f"{ch_name}_max"] = round(float(np.max(sig)), 2)
+                row[f"{ch_name}_std"] = round(float(np.std(sig)), 2)
 
         # DAPI mean (soma brightness)
         row["mean_soma_dapi"] = round(data["mean_soma"], 2)
@@ -803,7 +816,7 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
     # Load tile data
     print(f"\nLoading tile data...")
     fiber_seg, raw_channels = load_tile_data(tile_name, config)
-    config["_fiber_seg_nz"] = fiber_seg.shape[0]  # store Z depth for validation
+    config["_fiber_seg_nz"] = fiber_seg.shape[0]
 
     # Cell segmentation (pre-computed by cell_seg_microsam.py in 'microsam' env)
     cell_seg = None
@@ -812,7 +825,7 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
         cell_seg = load_cell_segmentation(cell_seg_cache)
     else:
         print(f"\n  WARNING: Cell seg not found at {cell_seg_cache}")
-        print(f"  Run: conda activate microsam && python cell_seg_microsam.py --tile {tile_name}")
+        print(f"  Run: conda activate microsam && python tools/cell_seg_microsam.py --tile {tile_name}")
 
     if cell_seg is None:
         print("  WARNING: No cell segmentation available, creating zeros")
@@ -839,9 +852,9 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
     if skeletons is None:
         raise RuntimeError("No skeletons available. Run 'skeletonize' step first.")
 
-    # Early exit if no fibers detected in this tile
+    # Early exit for tiles with no detected fibers.
     if len(skeletons) == 0:
-        print(f"\n  No fibers detected in tile {tile_name} — skipping remaining steps")
+        print(f"\n  No fibers detected in tile {tile_name} - skipping remaining steps")
         print(f"\n{'#'*60}")
         print(f"# PIPELINE COMPLETE: {nd2_name} / {tile_name} (0 fibers)")
         print(f"{'#'*60}")

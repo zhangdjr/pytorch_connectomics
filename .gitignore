@@ -115,8 +115,6 @@ dmypy.json
 
 # data
 *.h5
-*.sh
-!run_nd2_pipeline.sh
 ._*
 .DS_Store
 *.pth
@@ -170,6 +168,7 @@ logs/
 fiber_analysis/
 results_87slice/
 qc_gallery/
+checkpoints/
 
 # Large data files
 *.tiff
