@@ -4,9 +4,9 @@ Extract tiles from ND2 file with metadata.
 Loads the ND2 file once and extracts all tiles in a single pass.
 
 Usage:
-    python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/
-    python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/ --all-channels
-    python extract_nd2_tile.py --tiles 0 3 5      # Extract specific tiles
+    python tools/extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/
+    python tools/extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles/ --all-channels
+    python tools/extract_nd2_tile.py --tiles 0 3 5      # Extract specific tiles
 """
 
 import nd2
@@ -49,9 +49,11 @@ def extract_all_tiles(nd2_path, output_dir, tile_indices=None, all_channels=Fals
         print(f"  Shape: {f.shape}")
         print(f"  Dimensions: {f.sizes}")
 
-        n_positions = f.sizes['P']
-        n_z = f.sizes['Z']
-        n_channels = f.sizes['C']
+        sizes = dict(f.sizes)
+        has_positions_axis = "P" in sizes
+        n_positions = int(sizes.get("P", 1))
+        n_z = int(sizes.get("Z", 1))
+        n_channels = int(sizes.get("C", 1))
 
         # --- Voxel size (from ND2 metadata) ---
         voxel_size = f.voxel_size()
@@ -77,7 +79,27 @@ def extract_all_tiles(nd2_path, output_dir, tile_indices=None, all_channels=Fals
                 break  # Only need the first XYPosLoop
 
         if not tile_info:
-            raise RuntimeError("Could not find XYPosLoop in ND2 experiment metadata")
+            # Some ND2 files contain a single FOV and may not provide XYPosLoop.
+            if n_positions == 1:
+                tile_info[0] = {
+                    "name": "P0",
+                    "stage_x": 0.0,
+                    "stage_y": 0.0,
+                    "stage_z": 0.0,
+                }
+                print("\nNo XYPosLoop metadata found; using single-tile fallback name 'P0'.")
+            else:
+                raise RuntimeError("Could not find XYPosLoop in ND2 experiment metadata")
+
+        # Ensure tile metadata covers all positions.
+        if len(tile_info) < n_positions:
+            for i in range(len(tile_info), n_positions):
+                tile_info[i] = {
+                    "name": f"P{i}",
+                    "stage_x": 0.0,
+                    "stage_y": 0.0,
+                    "stage_z": 0.0,
+                }
 
         print(f"\nFound {len(tile_info)} tile positions:")
         for i, info in tile_info.items():
@@ -92,7 +114,16 @@ def extract_all_tiles(nd2_path, output_dir, tile_indices=None, all_channels=Fals
 
         # --- Load full array once ---
         print(f"\nLoading full ND2 array into memory...")
-        full_data = f.asarray()  # Shape: (P, Z, C, Y, X)
+        full_data = f.asarray()
+        if not has_positions_axis:
+            # ND2 without explicit position axis: treat as a single-tile file.
+            full_data = np.expand_dims(full_data, axis=0)
+        # Expected canonical shape here: (P, Z, C, Y, X)
+        if full_data.ndim != 5:
+            raise RuntimeError(
+                f"Unexpected ND2 array shape after normalization: {full_data.shape}. "
+                "Expected 5D shape (P, Z, C, Y, X)."
+            )
         print(f"  Array shape: {full_data.shape}, dtype: {full_data.dtype}")
 
         # --- Determine channels to extract ---

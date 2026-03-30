@@ -27,18 +27,20 @@ echo "Node:   $SLURM_NODELIST"
 echo "Start:  $(date)"
 echo ""
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORK_DIR="${WORK_DIR:-${REPO_DIR}}"
+
 source ~/.bashrc
 conda activate pytc
 
-export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:/home/zhangdjr/projects/umich-fiber/pytorch_connectomics:$PYTHONPATH
-
-WORK_DIR="/projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics"
+export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:${WORK_DIR}:${PYTHONPATH:-}
 ND2="/projects/weilab/dataset/barcode/2026/umich/A1-2003.nd2"
 STITCH_DIR="/projects/weilab/dataset/barcode/2026/umich"
 CONFIG="tutorials/fiber_nd2_stitched.yaml"
 CKPT="checkpoints/last.ckpt"
 
-cd $WORK_DIR
+cd "$WORK_DIR"
 mkdir -p logs
 
 # =============================================
@@ -54,7 +56,7 @@ else
     echo "Step 1: Stitching 13 ND2 tiles into single volume..."
     echo ""
 
-    python -u stitch_nd2_to_h5.py \
+    python -u tools/stitch_nd2_to_h5.py \
         --nd2 "$ND2" \
         --output_dir "$STITCH_DIR" \
         --channel 1
@@ -85,7 +87,7 @@ echo ""
 
 RESULTS_DIR="outputs/fiber_nd2_stitched/results"
 
-python -u infer_stitched_strips.py \
+python -u tools/infer_stitched_strips.py \
     --stitched "${STITCH_DIR}/nd2_stitched.h5" \
     --checkpoint "$CKPT" \
     --config "$CONFIG" \
@@ -111,7 +113,7 @@ echo ""
 echo "Step 3: Generating fiber coordinate CSVs..."
 echo ""
 
-python -u generate_fiber_coordinates.py \
+python -u tools/generate_fiber_coordinates.py \
     --pred_dir "$RESULTS_DIR" \
     --meta_dir "${STITCH_DIR}/tile_metadata" \
     --output_dir fiber_analysis/nd2_stitched

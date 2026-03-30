@@ -4,9 +4,9 @@ Neuroglancer viewer for all 13 ND2 tiles with raw images and fiber segmentations
 Displays tiles in their correct spatial positions using stage coordinates.
 
 Usage:
-    python neuroglancer_all_nd2_tiles.py
-    python neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1
-    python neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1 --no-raw
+    python tools/neuroglancer_all_nd2_tiles.py
+    python tools/neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1
+    python tools/neuroglancer_all_nd2_tiles.py --tiles A1,A2,B1 --no-raw
     
 Then open the printed URL in your browser (use SSH tunnel if remote).
 """

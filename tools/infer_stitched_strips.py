@@ -8,7 +8,7 @@ of ~2000 px (fits in ~23 GB GPU), accumulates raw predictions on CPU/disk,
 blends overlaps, then decodes instances once from the full prediction.
 
 Usage:
-    python infer_stitched_strips.py \\
+    python tools/infer_stitched_strips.py \\
         --stitched /projects/weilab/dataset/barcode/2026/umich/nd2_stitched.h5 \\
         --checkpoint checkpoints/last.ckpt \\
         --config tutorials/fiber_nd2_stitched.yaml \\

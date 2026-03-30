@@ -2,12 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET="${SCRIPT_DIR}/pipelines/nd2/run_nd2_pipeline_legacy.sh"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TARGET="${REPO_DIR}/pipelines/nd2/run_pipeline.sh"
 
 if [ ! -x "$TARGET" ]; then
   echo "ERROR: target script not executable: $TARGET"
   exit 1
 fi
 
-echo "[compat][legacy] run_nd2_pipeline.sh -> pipelines/nd2/run_nd2_pipeline_legacy.sh"
+echo "[compat] slurm_jobs/run_pipeline.sh -> pipelines/nd2/run_pipeline.sh"
 exec bash "$TARGET" "$@"

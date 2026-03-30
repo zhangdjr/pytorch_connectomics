@@ -8,8 +8,8 @@ Produces two outputs:
   - nd2_mask.h5       : binary coverage mask (uint8, 1=tissue, 0=empty)
 
 Usage:
-    python stitch_nd2_to_h5.py
-    python stitch_nd2_to_h5.py --nd2 /path/to/file.nd2 --output_dir /path/to/out/
+    python tools/stitch_nd2_to_h5.py
+    python tools/stitch_nd2_to_h5.py --nd2 /path/to/file.nd2 --output_dir /path/to/out/
 """
 
 import argparse

@@ -8,6 +8,28 @@ This document describes the **current SLURM ND2 pipeline** used in this repo:
 - `slurm_jobs/step2_infer_tiles_array.sl`
 - `slurm_jobs/step3_postprocess.sl`
 
+## 0. Entry Points (Use This)
+
+Recommended default entrypoints (single source of truth):
+
+- `bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2`
+- `bash pipelines/nd2/run_pipeline_batch.sh --nd2-dir /path/to/nd2_dir`
+
+Legacy entrypoint (kept for backward compatibility):
+
+- `bash run_nd2_pipeline.sh ...` (5-step flow with cell-seg + fiber analysis + merge)
+- `bash slurm_jobs/run_pipeline*.sh ...` (compat wrappers to `pipelines/nd2/`)
+
+## 0.5 Repository Layout
+
+Structured folders:
+
+- `pipelines/nd2/`: canonical launcher scripts
+- `slurm_jobs/nd2/`: canonical ND2 SLURM step scripts
+- `tools/`: ND2/fiber utility scripts
+
+Compatibility wrappers are kept at old locations (`slurm_jobs/run_pipeline*.sh`, `run_nd2_pipeline.sh`).
+
 ## 1. What This Pipeline Does
 
 For each ND2 file, the pipeline runs:
@@ -19,7 +41,7 @@ For each ND2 file, the pipeline runs:
 Important:
 
 - Step 2 is **dynamic tile-count aware**.
-- Step 3 currently calls `generate_fiber_coordinates.py` (not `fiber_pipeline.py`).
+- Step 3 currently calls `tools/generate_fiber_coordinates.py` (not `tools/fiber_pipeline.py`).
 - By default, Step 3 deletes `tiles/` after success (`CLEANUP_TILES=true`).
 
 ## 2. Key Dynamic Tile Behavior
@@ -28,6 +50,7 @@ Important:
   - `<nd2_root>/meta/tile_names.txt`
 - Step 2 is submitted as `--array=0-(N-1)` where `N = --max-array-tasks` (default 64).
 - Inside Step 2, tasks with index >= actual tile count exit successfully (no-op).
+- Step 2 temporary per-tile YAML is written to `<nd2_root>/meta/tmp/` (not `tutorials/`).
 - This supports ND2 files with different tile counts (for example: 4, 8, 12, 14, 23).
 
 ## 3. Output Layout
@@ -53,9 +76,9 @@ Run-level:
 ## 4. Single ND2 Usage
 
 ```bash
-cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
+cd <repo_root>
 
-bash slurm_jobs/run_pipeline.sh \
+bash pipelines/nd2/run_pipeline.sh \
   --nd2 /absolute/path/to/file.nd2 \
   --run-id 20260328_test_single
 ```
@@ -79,9 +102,9 @@ Optional:
 ## 5. Batch Usage (Directory of ND2 Files)
 
 ```bash
-cd /projects/weilab/liupeng/projects/umich-fiber/pytorch_connectomics
+cd <repo_root>
 
-bash slurm_jobs/run_pipeline_batch.sh \
+bash pipelines/nd2/run_pipeline_batch.sh \
   --nd2-dir /projects/weilab/dataset/barcode/2026/broad_dongqing \
   --glob "*.nd2" \
   --run-id 20260328_batch1 \
@@ -172,5 +195,5 @@ CLEANUP_TILES=false bash slurm_jobs/run_pipeline_batch.sh --nd2-dir /path/to/nd2
 ## 9. Notes and Scope
 
 - This README describes the **SLURM ND2 inference/postprocess pipeline** only.
-- `fiber_pipeline.py` is a separate analysis pipeline and is not called by current Step 3.
+- `tools/fiber_pipeline.py` is a separate analysis pipeline and is not called by current Step 3.
 - For large batches, keep a unique `run_id` per submission and avoid reusing old `run_id` unless you intentionally overwrite/retry within the same run namespace.

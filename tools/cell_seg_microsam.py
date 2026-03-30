@@ -5,8 +5,8 @@ Runs in the 'microsam' conda env, outputs NPZ files consumed by fiber_pipeline.p
 
 Usage:
     conda activate microsam
-    python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
-    python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache --tile A1
+    python tools/cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
+    python tools/cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache --tile A1
 
 Or via SLURM (see slurm_jobs/cell_seg_microsam.sl).
 """

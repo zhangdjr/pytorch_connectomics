@@ -13,8 +13,8 @@ Channel mapping (A1-2003.nd2, standard ordering):
   Ch3: 647nm — timestamp (symmetric, used for midpoint detection)
 
 Usage:
-    python fiber_pipeline.py --tile A1 --nd2-name A1-2003
-    python fiber_pipeline.py --tile A1 --nd2-name A1-2003 --steps cell_seg,skeletonize,extract,normalize,validate,csv
+    python tools/fiber_pipeline.py --tile A1 --nd2-name A1-2003
+    python tools/fiber_pipeline.py --tile A1 --nd2-name A1-2003 --steps cell_seg,skeletonize,extract,normalize,validate,csv
 """
 
 import os
@@ -114,7 +114,7 @@ def load_cell_segmentation(output_path):
             f"Cell segmentation not found: {output_path}\n"
             f"Run cell_seg_microsam.py in the 'microsam' conda env first:\n"
             f"  conda activate microsam\n"
-            f"  python cell_seg_microsam.py --tile <TILE>"
+            f"  python tools/cell_seg_microsam.py --tile <TILE>"
         )
 
     cell_seg = np.load(output_path)["cell_seg"]
@@ -825,7 +825,7 @@ def run_pipeline(tile_name, nd2_name, config, steps=None):
         cell_seg = load_cell_segmentation(cell_seg_cache)
     else:
         print(f"\n  WARNING: Cell seg not found at {cell_seg_cache}")
-        print(f"  Run: conda activate microsam && python cell_seg_microsam.py --tile {tile_name}")
+        print(f"  Run: conda activate microsam && python tools/cell_seg_microsam.py --tile {tile_name}")
 
     if cell_seg is None:
         print("  WARNING: No cell segmentation available, creating zeros")

@@ -27,7 +27,7 @@ export PYTHONPATH=/projects/weilab/weidf/lib/pytorch_connectomics/lib/MedNeXt:/h
 
 cd /home/zhangdjr/projects/umich-fiber/pytorch_connectomics
 
-python -u fiber_pipeline.py \
+python -u tools/fiber_pipeline.py \
     --tile A1 \
     --nd2-name A1-2003 \
     --n-jobs 16

@@ -270,7 +270,7 @@ If you need to run individual steps separately (e.g., for debugging or custom wo
 ```bash
 # 1. Extract tiles from ND2
 conda activate pytc
-python extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles --all-channels
+python tools/extract_nd2_tile.py --nd2 /path/to/file.nd2 --output /path/to/tiles --all-channels
 
 # 2. Fiber segmentation inference (GPU)
 python scripts/main.py --config /path/to/config.yaml --mode test \
@@ -278,11 +278,11 @@ python scripts/main.py --config /path/to/config.yaml --mode test \
 
 # 3. Cell segmentation (requires microsam env)
 conda activate microsam
-python cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
+python tools/cell_seg_microsam.py --tile-dir /path/to/tiles --output-dir /path/to/cache
 
 # 4. Fiber analysis (per tile)
 conda activate pytc
-python fiber_pipeline.py --tile A1 --nd2-name my_sample \
+python tools/fiber_pipeline.py --tile A1 --nd2-name my_sample \
     --tile-dir /path/to/tiles --pred-dir /path/to/fiber_seg --output-dir /path/to/output
 ```
 
@@ -304,14 +304,16 @@ python scripts/main.py --config tutorials/fiber_retrain_all.yaml
 ## Project Structure
 
 ```
-run_nd2_pipeline.sh                # THE MAIN SCRIPT — processes one ND2 file end-to-end
-fiber_pipeline.py                  # Analysis engine (skeletonize → signals → CSV)
-cell_seg_microsam.py               # Cell body segmentation (micro-sam)
-extract_nd2_tile.py                # ND2 tile/channel extraction
+pipelines/nd2/run_pipeline.sh      # Main ND2 launcher (single ND2)
+pipelines/nd2/run_pipeline_batch.sh# Main ND2 launcher (batch directory)
+run_nd2_pipeline.sh                # Legacy compatibility wrapper
+tools/fiber_pipeline.py            # Analysis engine (skeletonize → signals → CSV)
+tools/cell_seg_microsam.py         # Cell body segmentation (micro-sam)
+tools/extract_nd2_tile.py          # ND2 tile/channel extraction
 scripts/main.py                    # Deep learning inference entry point
 connectomics/                      # Core library (model, data, inference)
 tutorials/                         # YAML config files
-slurm_jobs/                        # Additional SLURM scripts (legacy)
+slurm_jobs/nd2/                    # ND2 SLURM step scripts
 environment.yml                    # Conda env spec (pytc)
 environment_microsam.yml           # Conda env spec (microsam)
 ```

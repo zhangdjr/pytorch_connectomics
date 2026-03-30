@@ -88,6 +88,48 @@ mkdir -p logs
 mkdir -p "$PRED_DIR"
 mkdir -p "${META_DIR}/tmp"
 
+if [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.h5" ] && [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.tiff" ]; then
+    echo "Predictions already exist for ${TILE_NAME}; skipping inference."
+    exit 0
+fi
+
+# -- GPU preflight -------------------------------------------------------------
+echo "Running GPU preflight checks..."
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "ERROR: nvidia-smi not found on node ${SLURM_NODELIST}"
+    exit 1
+fi
+
+if ! nvidia-smi -L >/dev/null 2>&1; then
+    echo "ERROR: nvidia-smi failed on node ${SLURM_NODELIST}"
+    exit 1
+fi
+
+GPU_LIST="$(nvidia-smi -L || true)"
+if [ -z "${GPU_LIST}" ]; then
+    echo "ERROR: No GPUs reported by nvidia-smi on node ${SLURM_NODELIST}"
+    exit 1
+fi
+echo "${GPU_LIST}"
+
+python - <<'PY'
+import sys
+import torch
+
+if not torch.cuda.is_available():
+    print("ERROR: torch.cuda.is_available() == False", file=sys.stderr)
+    sys.exit(1)
+
+count = torch.cuda.device_count()
+if count < 1:
+    print("ERROR: torch.cuda.device_count() < 1", file=sys.stderr)
+    sys.exit(1)
+
+print(f"torch.cuda.device_count() = {count}")
+for idx in range(count):
+    print(f"  cuda:{idx} -> {torch.cuda.get_device_name(idx)}")
+PY
+
 if [ ! -f "$TILE_FILE" ]; then
     echo "ERROR: Tile not found: $TILE_FILE"
     exit 1
@@ -99,11 +141,6 @@ fi
 if [ ! -f "$TEMPLATE" ]; then
     echo "ERROR: Template config not found: $TEMPLATE"
     exit 1
-fi
-
-if [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.h5" ] && [ -f "${PRED_DIR}/${TILE_NAME}_ch1_prediction.tiff" ]; then
-    echo "Predictions already exist for ${TILE_NAME}; skipping inference."
-    exit 0
 fi
 
 # -- Generate per-tile YAML (swap test_image path) ----------------------------

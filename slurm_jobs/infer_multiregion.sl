@@ -54,7 +54,7 @@ echo "============================================"
 if [ $EXIT_CODE -eq 0 ]; then
     echo "✅ All inference completed successfully"
     echo "Results saved to: outputs/fiber_retrain_all/20260311_223801/results/"
-    echo "Run 'python view_multiregion_predictions.py' to visualize."
+    echo "Run 'python tools/view_multiregion_predictions.py' to visualize."
 else
     echo "❌ Inference failed"
 fi
