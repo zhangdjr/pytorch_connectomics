@@ -7,8 +7,9 @@ PIPELINE_SCRIPT="${WORK_DIR}/pipelines/nd2/run_pipeline.sh"
 
 ND2_DIR=""
 GLOB_PATTERN="*.nd2"
-RUN_ID="$(date +%Y%m%d_%H%M%S)"
-RUNS_ROOT="/projects/weilab/dataset/barcode/2026/umich/fiber_runs"
+RUNS_ROOT="/projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results"
+SUBMIT_TAG="$(date +%Y%m%d_%H%M%S)"
+IGNORED_RUN_ID=""
 CHECKPOINT=""
 TEMPLATE=""
 TILE_NAMES=""
@@ -29,7 +30,7 @@ Required:
 
 Optional:
   --glob PATTERN           Filename pattern in nd2-dir (default: *.nd2)
-  --run-id ID              Shared run_id for all ND2 in this batch
+  --run-id ID              Deprecated; ignored (run-id is no longer used)
   --runs-root DIR          Root directory for outputs
   --checkpoint PATH        Override checkpoint passed to run_pipeline.sh
   --template PATH          Override config template passed to run_pipeline.sh
@@ -53,7 +54,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --run-id)
-            RUN_ID="$2"
+            IGNORED_RUN_ID="$2"
             shift 2
             ;;
         --runs-root)
@@ -116,7 +117,11 @@ if [[ ! -x "$PIPELINE_SCRIPT" ]]; then
     exit 1
 fi
 
-RUN_ROOT="${RUNS_ROOT}/${RUN_ID}"
+if [[ -n "$IGNORED_RUN_ID" ]]; then
+    echo "WARNING: --run-id is deprecated and ignored. Outputs now go to runs-root/nd2_id."
+fi
+
+RUN_ROOT="${RUNS_ROOT}"
 mkdir -p "${RUN_ROOT}/logs"
 
 mapfile -d '' ND2_FILES < <(find "$ND2_DIR" -maxdepth 1 -type f -name "$GLOB_PATTERN" -print0 | sort -z)
@@ -129,7 +134,7 @@ fi
 echo "================================================"
 echo "Batch ND2 Pipeline Submission"
 echo "================================================"
-echo "run_id:      $RUN_ID"
+echo "submit_tag:  $SUBMIT_TAG"
 echo "nd2_dir:     $ND2_DIR"
 echo "glob:        $GLOB_PATTERN"
 echo "runs_root:   $RUNS_ROOT"
@@ -149,7 +154,6 @@ for nd2_file in "${ND2_FILES[@]}"; do
     cmd=(
         bash "$PIPELINE_SCRIPT"
         --nd2 "$nd2_file"
-        --run-id "$RUN_ID"
         --runs-root "$RUNS_ROOT"
     )
 
@@ -175,7 +179,7 @@ for nd2_file in "${ND2_FILES[@]}"; do
         cmd+=(--only-step3)
     fi
 
-    submit_log="$(mktemp "${RUN_ROOT}/logs/submit_${RUN_ID}_XXXXXX.log")"
+    submit_log="$(mktemp "${RUN_ROOT}/logs/submit_${SUBMIT_TAG}_XXXXXX.log")"
     if ! "${cmd[@]}" | tee "$submit_log"; then
         echo "ERROR: Submission failed for ${nd2_file}. See ${submit_log}"
         exit 1
@@ -196,12 +200,12 @@ echo "Batch submission complete: ${submitted} ND2 jobs submitted."
 
 if [[ "${#STEP3_JOB_IDS[@]}" -gt 0 ]]; then
     dep_list="$(IFS=:; echo "${STEP3_JOB_IDS[*]}")"
-    SAFE_RUN_ID="$(echo "$RUN_ID" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-30)"
+    SAFE_TAG="$(echo "$SUBMIT_TAG" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-30)"
     SUMMARY_JOB=$(sbatch --parsable \
         --dependency="afterany:${dep_list}" \
         --chdir "$WORK_DIR" \
-        --export="ALL,RUN_ID=${RUN_ID},RUNS_ROOT=${RUNS_ROOT},RUN_ROOT=${RUN_ROOT},WORK_DIR=${WORK_DIR}" \
-        --job-name="nd2_summary_${SAFE_RUN_ID}" \
+        --export="ALL,RUN_ID=no_run_id,RUNS_ROOT=${RUNS_ROOT},RUN_ROOT=${RUN_ROOT},WORK_DIR=${WORK_DIR}" \
+        --job-name="nd2_summary_${SAFE_TAG}" \
         --output "${RUN_ROOT}/logs/nd2_summary_%j.out" \
         --error "${RUN_ROOT}/logs/nd2_summary_%j.err" \
         slurm_jobs/nd2/step4_summarize_run.sl)

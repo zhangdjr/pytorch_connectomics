@@ -4,7 +4,6 @@
 #
 # Usage:
 #   bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2
-#   bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2 --run-id 20260325_prod_v1
 #   bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2 --skip-step1
 #   bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2 --only-step3
 #   bash pipelines/nd2/run_pipeline.sh --nd2 /path/to/file.nd2 --exclude-nodes g007
@@ -27,8 +26,9 @@ cd "$WORK_DIR"
 
 SKIP_STEP1=false
 ONLY_STEP3=false
-RUNS_ROOT="/projects/weilab/dataset/barcode/2026/umich/fiber_runs"
-RUN_ID="$(date +%Y%m%d_%H%M%S)"
+RUNS_ROOT="/projects/weilab/dataset/barcode/2026/broad_dongqing/fiber_results"
+RUN_ID="no_run_id"
+IGNORED_RUN_ID=""
 ND2_PATH=""
 ND2_ID=""
 CKPT="checkpoints/last.ckpt"
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --run-id)
-            RUN_ID="$2"
+            IGNORED_RUN_ID="$2"
             shift 2
             ;;
         --nd2)
@@ -96,6 +96,10 @@ if [ -z "$ND2_PATH" ]; then
     exit 1
 fi
 
+if [ -n "$IGNORED_RUN_ID" ]; then
+    echo "WARNING: --run-id is deprecated and ignored. Outputs now go to runs-root/nd2_id without run_id."
+fi
+
 if [ ! -f "$ND2_PATH" ]; then
     echo "ERROR: ND2 file not found: $ND2_PATH"
     exit 1
@@ -120,7 +124,7 @@ ARRAY_RANGE="0-$((MAX_ARRAY_TASKS - 1))"
 
 SAFE_ND2_ID="$(echo "$ND2_ID" | tr -c 'A-Za-z0-9_-' '_' | cut -c1-40)"
 
-RUN_ROOT="${RUNS_ROOT}/${RUN_ID}"
+RUN_ROOT="${RUNS_ROOT}"
 ND2_ROOT="${RUN_ROOT}/${ND2_ID}"
 INPUT_DIR="${ND2_ROOT}/input"
 TILE_DIR="${ND2_ROOT}/tiles"
@@ -130,7 +134,7 @@ LOG_DIR="${ND2_ROOT}/logs"
 META_DIR="${ND2_ROOT}/meta"
 QC_DIR="${ND2_ROOT}/qc"
 
-mkdir -p "$INPUT_DIR" "$TILE_DIR" "$PRED_DIR" "$POSTPROC_DIR" "$LOG_DIR" "$META_DIR" "$QC_DIR"
+mkdir -p "$RUN_ROOT" "$INPUT_DIR" "$TILE_DIR" "$PRED_DIR" "$POSTPROC_DIR" "$LOG_DIR" "$META_DIR" "$QC_DIR"
 ln -sfn "$ND2_PATH" "${INPUT_DIR}/$(basename "$ND2_PATH")"
 TILE_NAMES_FILE="${META_DIR}/tile_names.txt"
 printf "%s\n" "${TILE_NAMES_ARRAY[@]}" > "$TILE_NAMES_FILE"
